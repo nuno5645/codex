@@ -6,7 +6,7 @@
     <title>Codex AI Assistant</title>
     
     <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com"></script
     
     <!-- Alpine.js for reactive components -->
     <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
@@ -63,6 +63,15 @@
     
     <!-- Custom styles -->
     <style>
+      :root {
+        --bg: #0b0f14;
+        --panel: #0f141b;
+        --panel-2: #0d131a;
+        --border: #1b2330;
+        --text: #dbe1ea;
+        --muted: #8b9bb4;
+        --accent: #3b82f6;
+      }
       /* Custom scrollbar */
       ::-webkit-scrollbar {
         width: 6px;
@@ -71,11 +80,11 @@
         background: transparent;
       }
       ::-webkit-scrollbar-thumb {
-        background: rgb(71 85 105 / 0.5);
+        background: #2a3443;
         border-radius: 3px;
       }
       ::-webkit-scrollbar-thumb:hover {
-        background: rgb(71 85 105 / 0.7);
+        background: #314055;
       }
       
       /* Typing indicator animation */
@@ -105,43 +114,39 @@
         background-clip: text;
       }
       
-      /* Glass morphism effect */
+      /* Cursor-like flat panels */
       .glass-effect {
-        backdrop-filter: blur(16px);
-        background: rgba(15, 23, 42, 0.8);
-        border: 1px solid rgba(148, 163, 184, 0.1);
+        background: var(--panel);
+        border: 1px solid var(--border);
+        backdrop-filter: none;
       }
       
       /* Message bubble styles */
       .message-bubble {
         position: relative;
       }
-      .message-bubble.user::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        right: -8px;
-        width: 0;
-        height: 0;
-        border: 8px solid transparent;
-        border-left-color: rgb(6 78 59 / 0.3);
-        border-top-color: rgb(6 78 59 / 0.3);
+      .message-bubble.user::before,
+      .message-bubble.assistant::before { display: none; }
+      .message-bubble.user {
+        background: var(--panel-2) !important;
+        border-color: var(--border) !important;
       }
-      .message-bubble.assistant::before {
-        content: '';
-        position: absolute;
-        top: 0;
-        left: -8px;
-        width: 0;
-        height: 0;
-        border: 8px solid transparent;
-        border-right-color: rgb(30 41 59 / 0.5);
-        border-top-color: rgb(30 41 59 / 0.5);
+      .message-bubble.assistant {
+        background: var(--panel) !important;
+        border-color: var(--border) !important;
       }
+
+      /* Inputs */
+      textarea {
+        background: var(--panel) !important;
+        border-color: var(--border) !important;
+        color: var(--text) !important;
+      }
+      .gradient-text { color: var(--text); -webkit-text-fill-color: initial; background: none; }
     </style>
   </head>
   
-  <body class="h-full bg-gradient-to-br from-dark-950 via-dark-900 to-dark-800 text-slate-100 font-sans" x-data="codexApp()" x-init="init()">
+  <body class="h-full bg-[#0b0f14] text-slate-100 font-sans" x-data="codexApp()" x-init="init()">
     <div class="flex h-full">
       
       <!-- Sidebar -->
@@ -179,6 +184,45 @@
 
         <!-- Directory Browser -->
         <div class="flex-1 flex flex-col min-h-0">
+          <!-- Conversations -->
+          <div class="p-4 border-b border-slate-700/50">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="text-sm font-semibold text-slate-200 flex items-center">
+                <svg class="w-4 h-4 mr-2 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16h6a2 2 0 002-2V7a2 2 0 00-2-2H9a2 2 0 00-2 2v7a2 2 0 002 2z"></path>
+                </svg>
+                Conversations
+              </h3>
+              <button @click="startNewChat" class="text-xs bg-blue-600/80 hover:bg-blue-600 px-3 py-1.5 rounded-lg transition-all duration-200 border border-blue-400/30 shadow">
+                New Chat
+              </button>
+            </div>
+            <div class="bg-[var(--panel-2)] rounded-lg p-2 border border-[var(--border)]">
+              <template x-if="conversations.length === 0">
+                <div class="text-xs text-slate-400 px-2 py-2">No conversations yet</div>
+              </template>
+              <div class="max-h-56 overflow-y-auto space-y-1">
+                <template x-for="conv in sortedConversations()" :key="conv.id">
+                  <div class="group flex items-center justify-between px-2 py-2 rounded-lg cursor-pointer border border-transparent hover:bg-slate-700/40"
+                       :class="activeConversationId === conv.id ? 'bg-blue-500/20 border-blue-500/50 shadow-sm' : ''">
+                    <div class="min-w-0 flex-1" @click="openConversation(conv.id)">
+                      <div class="text-sm truncate text-slate-200" x-text="conv.title || 'Untitled'"></div>
+                      <div class="text-[11px] text-slate-500" x-text="new Date(conv.updated_at || conv.created_at).toLocaleString()"></div>
+                    </div>
+                    <div class="opacity-0 group-hover:opacity-100 transition-opacity duration-150 ml-2 flex items-center space-x-1">
+                      <button class="w-6 h-6 rounded hover:bg-slate-600/60 flex items-center justify-center" title="Delete"
+                              @click.stop="removeConversation(conv.id)">
+                        <svg class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
           <div class="p-4 border-b border-slate-700/50">
             <h3 class="text-sm font-semibold text-slate-200 mb-3 flex items-center">
               <svg class="w-4 h-4 mr-2 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -186,7 +230,7 @@
               </svg>
               Working Directory
             </h3>
-            <div class="bg-dark-800/60 rounded-lg p-3 font-mono text-xs text-slate-300 break-all border border-slate-700/30" x-text="currentPath">
+            <div class="bg-[var(--panel-2)] rounded-lg p-3 font-mono text-xs text-slate-300 break-all border border-[var(--border)]" x-text="currentPath">
               Loading...
             </div>
           </div>
@@ -203,61 +247,48 @@
               </div>
             </template>
             
-            <!-- Directory listing -->
+            <!-- VS Code-like Explorer tree -->
             <div class="space-y-1" x-show="!isLoadingDirectory">
-              <!-- Current directory selector -->
-              <button 
-                @click="selectPath(currentPath)"
-                :class="selectedPath === currentPath ? 'bg-blue-500/20 border-blue-500/50 shadow-sm' : 'hover:bg-slate-700/40 border-transparent'"
-                class="w-full flex items-center p-3 rounded-xl border transition-all duration-200 text-left group"
-              >
-                <div class="w-8 h-8 bg-blue-500/20 rounded-lg flex items-center justify-center mr-3">
-                  <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                  </svg>
-                </div>
-                <span class="text-sm font-medium text-slate-200 group-hover:text-white">Select this directory</span>
-              </button>
-              
-              <!-- Parent directory -->
-              <template x-if="parentPath">
-                <button 
-                  @click="browseDirectory(parentPath)"
-                  class="w-full flex items-center p-3 rounded-xl hover:bg-slate-700/40 transition-all duration-200 text-left group border border-transparent"
-                >
-                  <div class="w-8 h-8 bg-slate-600/30 rounded-lg flex items-center justify-center mr-3">
-                    <svg class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16l-4-4m0 0l4-4m-4 4h18"></path>
-                    </svg>
-                  </div>
-                  <span class="text-sm text-slate-400 group-hover:text-slate-300">..</span>
-                </button>
-              </template>
-              
-              <!-- Directory items -->
-              <template x-for="item in folderItems" :key="item.path">
-                <button 
-                  @click="item.is_dir ? browseDirectory(item.path) : selectPath(item.path)"
-                  :class="selectedPath === item.path ? 'bg-blue-500/20 border-blue-500/50 shadow-sm' : 'hover:bg-slate-700/40 border-transparent'"
-                  class="w-full flex items-center justify-between p-3 rounded-xl border transition-all duration-200 text-left group"
-                >
-                  <div class="flex items-center min-w-0 flex-1">
-                    <div class="w-8 h-8 rounded-lg flex items-center justify-center mr-3 flex-shrink-0" 
-                         :class="item.is_dir ? 'bg-blue-500/20' : 'bg-slate-600/30'">
-                      <svg x-show="item.is_dir" class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2V7z"></path>
-                      </svg>
-                      <svg x-show="!item.is_dir" class="w-4 h-4 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
-                      </svg>
+              <div class="text-xs text-slate-400 px-1">Explorer</div>
+              <div class="mt-1">
+                <template x-if="treeRoot">
+                  <div>
+                    <!-- Root row -->
+                    <div class="flex items-center px-2 py-1.5 rounded-lg hover:bg-slate-700/40 cursor-pointer group border border-transparent"
+                         :class="selectedPath === treeRoot.path ? 'bg-blue-500/20 border-blue-500/50' : ''">
+                      <button @click.stop="toggleNode(treeRoot)" class="w-4 h-4 mr-1 text-slate-400 hover:text-slate-200 flex items-center justify-center">
+                        <svg x-show="treeRoot.is_dir" class="w-3 h-3 transition-transform duration-150" :class="treeRoot.expanded ? 'rotate-90' : ''" fill="currentColor" viewBox="0 0 20 20"><path d="M6 6l6 4-6 4V6z"/></svg>
+                      </button>
+                      <div class="w-4 h-4 mr-2 flex items-center justify-center">
+                        <svg x-show="treeRoot.is_dir && treeRoot.expanded" class="w-4 h-4 text-yellow-300" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v1H2V6z"/><path d="M2 9h16l-2 7a2 2 0 01-2 1H6a2 2 0 01-2-1L2 9z"/></svg>
+                        <svg x-show="treeRoot.is_dir && !treeRoot.expanded" class="w-4 h-4 text-yellow-200" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>
+                      </div>
+                      <span class="text-sm text-slate-200 truncate" @click="selectPath(treeRoot.path)" x-text="getBaseName(treeRoot.path) || treeRoot.path"></span>
+                      <div class="ml-auto" x-show="treeRoot.loading"><div class="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div></div>
                     </div>
-                    <span class="text-sm truncate font-medium" :class="item.is_dir ? 'text-blue-300' : 'text-slate-300'" x-text="item.name"></span>
+                    <!-- Children -->
+                    <div x-show="treeRoot.expanded" class="mt-1">
+                      <template x-for="entry in visibleTree" :key="entry.node.path">
+                        <div class="flex items-center px-2 py-1.5 rounded-lg hover:bg-slate-700/40 cursor-pointer group border border-transparent"
+                             :style="'padding-left: ' + (entry.depth * 12) + 'px'"
+                             :class="selectedPath === entry.node.path ? 'bg-blue-500/20 border-blue-500/50' : ''">
+                          <button @click.stop="toggleNode(entry.node)" class="w-4 h-4 mr-1 text-slate-400 hover:text-slate-200 flex items-center justify-center" x-show="entry.node.is_dir">
+                            <svg class="w-3 h-3 transition-transform duration-150" :class="entry.node.expanded ? 'rotate-90' : ''" fill="currentColor" viewBox="0 0 20 20"><path d="M6 6l6 4-6 4V6z"/></svg>
+                          </button>
+                          <div class="w-4 h-4 mr-2 flex items-center justify-center">
+                            <svg x-show="entry.node.is_dir && entry.node.expanded" class="w-4 h-4 text-yellow-300" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v1H2V6z"/><path d="M2 9h16l-2 7a2 2 0 01-2 1H6a2 2 0 01-2-1L2 9z"/></svg>
+                            <svg x-show="entry.node.is_dir && !entry.node.expanded" class="w-4 h-4 text-yellow-200" fill="currentColor" viewBox="0 0 20 20"><path d="M2 6a2 2 0 012-2h4l2 2h6a2 2 0 012 2v7a2 2 0 01-2 2H6a2 2 0 01-2-2V6z"/></svg>
+                            <svg x-show="!entry.node.is_dir" class="w-4 h-4 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                          </div>
+                          <span class="text-sm truncate" :class="entry.node.is_dir ? 'text-blue-300' : 'text-slate-300'" @click="entry.node.is_dir ? selectPath(entry.node.path) : null" x-text="entry.node.name"></span>
+                          <span class="text-xs text-slate-500 ml-auto" x-show="entry.node.loading"><div class="w-3 h-3 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div></span>
+                          <span class="text-xs text-slate-500 ml-auto" x-show="!entry.node.is_dir && entry.node.size" x-text="formatFileSize(entry.node.size)"></span>
+                        </div>
+                      </template>
+                    </div>
                   </div>
-                  <template x-if="item.size && !item.is_dir">
-                    <span class="text-xs text-slate-500 ml-2 flex-shrink-0 bg-slate-800/50 px-2 py-1 rounded-md" x-text="formatFileSize(item.size)"></span>
-                  </template>
-                </button>
-              </template>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -265,7 +296,7 @@
         <!-- Selected Path Display -->
         <div class="p-4 border-t border-slate-700/50 bg-dark-900/30">
           <div class="text-xs text-slate-400 mb-2 font-medium">Working in:</div>
-          <div class="bg-dark-800/60 rounded-lg p-3 font-mono text-xs break-all border border-slate-700/30" 
+          <div class="bg-[var(--panel-2)] rounded-lg p-3 font-mono text-xs break-all border border-[var(--border)]" 
                :class="selectedPath ? 'text-green-400' : 'text-slate-500'" 
                x-text="selectedPath || 'No directory selected'">
           </div>
@@ -283,13 +314,20 @@
               <p class="text-slate-400">Describe your coding task and I'll help you implement it</p>
         </div>
             <div class="flex items-center space-x-3">
-              <div class="text-xs bg-dark-800/60 px-4 py-2 rounded-full border border-slate-700/30">
+              <div class="text-xs bg-[var(--panel-2)] px-4 py-2 rounded-full border border-[var(--border)]">
                 <span class="text-slate-400">Tokens:</span>
                 <span class="text-slate-200 font-semibold ml-1" x-text="totalTokens">0</span>
               </div>
               <button 
+                @click="cancelRunning"
+                :disabled="!isRunning"
+                class="text-xs bg-red-600/30 hover:bg-red-600/40 disabled:opacity-50 disabled:cursor-not-allowed px-4 py-2 rounded-full transition-all duration-200 border border-red-500/40 text-red-200"
+              >
+                Cancel
+              </button>
+              <button 
                 @click="toggleLogs"
-                class="text-xs bg-slate-700/50 hover:bg-slate-600/50 px-4 py-2 rounded-full transition-all duration-200 border border-slate-600/30 hover:border-slate-500/50"
+                class="text-xs bg-[var(--panel-2)] hover:bg-[var(--panel)] px-4 py-2 rounded-full transition-all duration-200 border border-[var(--border)]"
               >
                 <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
@@ -315,7 +353,7 @@
                   <span class="font-semibold text-slate-200">Codex Assistant</span>
                   <span class="text-xs text-slate-500" x-text="new Date().toLocaleTimeString()"></span>
           </div>
-                <div class="message-bubble assistant bg-gradient-to-r from-slate-800/60 to-slate-700/40 rounded-2xl rounded-tl-lg p-6 border border-slate-700/40 shadow-lg">
+                <div class="message-bubble assistant rounded-2xl rounded-tl-lg p-6 border shadow-lg">
                   <div class="flex items-center space-x-2 mb-4">
                     <span class="text-2xl">👋</span>
                     <span class="text-lg font-semibold text-slate-100">Hello!</span>
@@ -354,7 +392,7 @@
           <div x-show="selectedImages.length > 0" class="mb-4">
             <div class="flex flex-wrap gap-3">
               <template x-for="(image, index) in selectedImages" :key="image.id">
-                <div class="relative bg-dark-800/60 rounded-xl p-3 flex items-center space-x-3 group border border-slate-700/30">
+                <div class="relative bg-[var(--panel-2)] rounded-xl p-3 flex items-center space-x-3 group border border-[var(--border)]">
                   <img :src="image.url" :alt="image.file.name" class="w-12 h-12 object-cover rounded-lg border border-slate-600/50">
                   <div class="min-w-0">
                     <div class="text-sm font-medium text-slate-300 truncate max-w-32" x-text="image.file.name"></div>
@@ -398,7 +436,7 @@
               >
               <button 
                 @click="$refs.imageInput.click()"
-                class="w-9 h-9 bg-slate-700/50 hover:bg-slate-600/50 rounded-xl flex items-center justify-center transition-all duration-200 transform hover:scale-105 border border-slate-600/30"
+                class="w-9 h-9 bg-[var(--panel-2)] hover:bg-[var(--panel)] rounded-xl flex items-center justify-center transition-all duration-200 transform hover:scale-105 border border-[var(--border)]"
                 title="Attach image"
               >
                 <svg class="w-5 h-5 text-slate-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -468,13 +506,13 @@
         <div class="flex items-center space-x-2">
           <button 
             @click="clearLogs"
-            class="text-xs bg-slate-700/50 hover:bg-slate-600/50 px-3 py-1.5 rounded-lg transition-all duration-200 border border-slate-600/30"
+            class="text-xs bg-[var(--panel-2)] hover:bg-[var(--panel)] px-3 py-1.5 rounded-lg transition-all duration-200 border border-[var(--border)]"
           >
             Clear
           </button>
           <button 
             @click="copyLogs"
-            class="text-xs bg-slate-700/50 hover:bg-slate-600/50 px-3 py-1.5 rounded-lg transition-all duration-200 border border-slate-600/30"
+            class="text-xs bg-[var(--panel-2)] hover:bg-[var(--panel)] px-3 py-1.5 rounded-lg transition-all duration-200 border border-[var(--border)]"
           >
             Copy
           </button>
@@ -500,6 +538,9 @@
           selectedPath: '',
           parentPath: null,
           folderItems: [],
+          // Tree model
+          treeRoot: null,
+          visibleTree: [], // flattened for rendering [{ depth, node }]
           isLoadingDirectory: false,
           isRunning: false,
           status: 'Idle',
@@ -512,6 +553,11 @@
           logsContent: '',
           lastTaskId: '',
 
+          // Conversations state
+          conversations: [], // [{ id, title, created_at, updated_at, messages: [{ role, author, content_html, ts }] }]
+          activeConversationId: '',
+          currentEventSource: null,
+
           // Chat state
           lastAssistantEl: null,
           lastAssistantText: '',
@@ -522,7 +568,13 @@
 
           // Initialize app
           async init() {
+            this.loadConversationsFromStorage();
             await this.loadInitialDirectory();
+            if (this.activeConversationId && this.findConversation(this.activeConversationId)) {
+              this.renderConversationById(this.activeConversationId);
+            }
+            // Load server conversations list (merge titles for server-backed persistence)
+            this.refreshServerConversations();
           },
 
           // Directory operations
@@ -535,6 +587,9 @@
               this.selectedPath = this.currentPath;
               this.parentPath = data.parent_path;
               this.folderItems = data.items;
+              // Build initial tree root
+              this.treeRoot = this.buildNode(this.currentPath, true, data.items);
+              this.recomputeVisibleTree();
         } catch (error) {
           console.error('Failed to load directory:', error);
               this.showError('Failed to load directory listing');
@@ -551,6 +606,12 @@
               this.currentPath = data.current_path;
               this.parentPath = data.parent_path;
               this.folderItems = data.items;
+              // Also update tree: if path equals current root, refresh children
+              if (this.treeRoot && this.treeRoot.path === data.current_path) {
+                this.treeRoot.children = this.mapItemsToNodes(data.items);
+                this.treeRoot.expanded = true;
+                this.recomputeVisibleTree();
+              }
         } catch (error) {
           console.error('Failed to browse directory:', error);
               this.showError('Failed to browse directory');
@@ -561,6 +622,70 @@
 
           selectPath(path) {
             this.selectedPath = path;
+          },
+
+          // VS Code-like tree helpers
+          getBaseName(p) {
+            try { return p.split(/[/\\]/).filter(Boolean).pop() || ''; } catch (_) { return p; }
+          },
+          buildNode(path, isDir, items) {
+            return {
+              name: this.getBaseName(path) || path,
+              path,
+              is_dir: true,
+              expanded: true,
+              loading: false,
+              children: this.mapItemsToNodes(items || [])
+            };
+          },
+          mapItemsToNodes(items) {
+            return (items || []).map(it => ({
+              name: it.name,
+              path: it.path,
+              is_dir: !!it.is_dir,
+              size: it.size || null,
+              expanded: false,
+              loading: false,
+              children: []
+            }));
+          },
+          async toggleNode(node) {
+            if (!node.is_dir) return;
+            if (!node.expanded) {
+              // Expanding: lazy load children if empty
+              if (!node.children || node.children.length === 0) {
+                node.loading = true;
+                this.recomputeVisibleTree();
+                try {
+                  const res = await fetch(`/api/browse?path=${encodeURIComponent(node.path)}`);
+                  const data = await res.json();
+                  node.children = this.mapItemsToNodes(data.items || []);
+                } catch (_) { /* ignore */ }
+                node.loading = false;
+              }
+              node.expanded = true;
+            } else {
+              node.expanded = false;
+            }
+            this.recomputeVisibleTree();
+          },
+          recomputeVisibleTree() {
+            const out = [];
+            const walk = (n, depth) => {
+              if (!n) return;
+              if (n !== this.treeRoot) out.push({ depth, node: n });
+              if (n.is_dir && n.expanded && n.children) {
+                const dirFirst = [...n.children].sort((a, b) => {
+                  if (a.is_dir && !b.is_dir) return -1;
+                  if (!a.is_dir && b.is_dir) return 1;
+                  return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+                });
+                for (const c of dirFirst) walk(c, depth + 1);
+              }
+            };
+            // Show children of root flattened; root row is rendered separately
+            walk(this.treeRoot, 0);
+            this.visibleTree = out;
           },
 
           // File operations
@@ -610,12 +735,18 @@
           return;
         }
 
-            // Add user message to chat
+            // Ensure conversation exists, then add user message to chat and persist
+            this.ensureActiveConversation();
             if (this.messageInput.trim()) {
-              this.addMessage('user', 'You', this.messageInput.trim());
+              const userText = this.messageInput.trim();
+              this.addMessage('user', 'You', userText);
+              this.appendMessageToActiveConversation({ role: 'user', author: 'You', content_html: this.escapeHtml(userText).replace(/\n/g, '<br>') });
+              this.maybeSetConversationTitleFrom(userText);
             }
             if (this.selectedImages.length) {
-              this.addMessage('user', 'You', `${this.selectedImages.length} image(s) attached.`);
+              const attachmentNote = `${this.selectedImages.length} image(s) attached.`;
+              this.addMessage('user', 'You', attachmentNote);
+              this.appendMessageToActiveConversation({ role: 'user', author: 'You', content_html: this.escapeHtml(attachmentNote) });
             }
 
             const message = this.messageInput.trim();
@@ -624,6 +755,11 @@
             this.status = 'Running';
 
             try {
+          // Reset streaming state so each task gets a fresh set of bubbles
+          this.lastAssistantEl = null;
+          this.lastAssistantText = '';
+          this.currentReasonEl = null;
+          this.currentReasonText = '';
           // Convert images to data URLs
           let imageDataUrls = [];
               if (this.selectedImages.length) {
@@ -640,7 +776,8 @@
               prompt: message,
                   full_auto: this.fullAutoMode,
                   cwd: this.selectedPath,
-              images: imageDataUrls
+              images: imageDataUrls,
+              conversation_id: this.activeConversationId && !this.activeConversationId.startsWith('local-') ? this.activeConversationId : undefined
             })
           });
           
@@ -656,12 +793,20 @@
           this.showTypingIndicator(this.lastAssistantEl);
           this.scrollToBottom(true);
 
-          const { task_id } = await response.json();
+          const { task_id, conversation_id } = await response.json();
               this.lastTaskId = task_id;
+              if (conversation_id) {
+                this.adoptServerConversationId(conversation_id);
+              }
               this.clearAttachments();
           
-          // Connect to event stream
+          // Connect to event stream (close previous if any)
+          if (this.currentEventSource) {
+            try { this.currentEventSource.close(); } catch (_) {}
+            this.currentEventSource = null;
+          }
           const eventSource = new EventSource(`/api/events/${task_id}`);
+          this.currentEventSource = eventSource;
           
           eventSource.onmessage = (e) => {
             try {
@@ -680,6 +825,7 @@
             eventSource.close();
                 this.isRunning = false;
                 this.status = 'Idle';
+                if (this.currentEventSource === eventSource) this.currentEventSource = null;
           };
           
         } catch (error) {
@@ -688,6 +834,13 @@
               this.isRunning = false;
               this.status = 'Idle';
             }
+          },
+
+          async cancelRunning() {
+            if (!this.isRunning || !this.lastTaskId) return;
+            try {
+              await fetch(`/api/cancel/${encodeURIComponent(this.lastTaskId)}`, { method: 'POST' });
+            } catch (_) {}
           },
 
           // Event handling
@@ -709,6 +862,7 @@
                 this.lastAssistantText = '';
                 this.showTypingIndicator(this.lastAssistantEl);
                 this.scrollToBottom(true);
+                this.appendMessageToActiveConversation({ role: 'assistant', author: 'Codex', content_html: '<span class="text-slate-400">Preparing…</span>' });
             break;
 
               case 'agent_message': {
@@ -722,6 +876,7 @@
                 this.hideTypingIndicator(this.lastAssistantEl);
                 this.lastAssistantText = String(msg.message || '');
                 this.scrollToBottom(true);
+                this.updateLastAssistantMessageInActiveConversation(html);
               }
             break;
 
@@ -731,9 +886,11 @@
                 }
                 const content = this.lastAssistantEl.querySelector('.message-content');
                 this.showTypingIndicator(this.lastAssistantEl);
-                content.innerHTML += this.escapeHtml(msg.delta).replace(/\n/g, '<br>');
+                const deltaHtml = this.escapeHtml(msg.delta).replace(/\n/g, '<br>');
+                content.innerHTML += deltaHtml;
                 this.lastAssistantText += String(msg.delta || '');
                 this.scrollToBottom();
+                this.updateLastAssistantMessageInActiveConversation(content.innerHTML);
               }
             break;
 
@@ -764,13 +921,13 @@
                   cwd: msg.cwd || '',
                   parsed_cmd: msg.parsed_cmd || []
                 });
-                this.scrollToBottom(true);
+                this.anchorAssistantToBottom();
             break;
 
               case 'exec_command_output_delta': {
                 const text = this.decodeChunk(msg.chunk);
                 this.appendExecOutput(msg.call_id, msg.stream, text);
-                this.scrollToBottom();
+                this.anchorAssistantToBottom();
               }
             break;
 
@@ -781,7 +938,7 @@
                   stderr: typeof msg.stderr === 'string' ? msg.stderr : '',
                   duration: msg.duration || { secs: 0, nanos: 0 }
                 });
-                this.scrollToBottom(true);
+                this.anchorAssistantToBottom();
             break;
 
               // Patch apply lifecycle (apply_patch)
@@ -790,7 +947,7 @@
                   auto_approved: !!msg.auto_approved,
                   changes: msg.changes || {},
                 });
-                this.scrollToBottom(true);
+                this.anchorAssistantToBottom();
             break;
 
               case 'patch_apply_end':
@@ -799,14 +956,15 @@
                   stdout: msg.stdout || '',
                   stderr: msg.stderr || ''
                 });
-                this.scrollToBottom(true);
+                this.anchorAssistantToBottom();
             break;
 
               case 'turn_diff':
                 if (msg.unified_diff) {
-                  const html = `<div class="font-mono text-xs bg-dark-900/60 border border-slate-700/50 rounded-lg p-3 overflow-auto max-h-72"><pre>${this.escapeHtml(msg.unified_diff)}</pre></div>`;
+                  const html = `<div class="font-mono text-xs bg-[var(--panel-2)] border border-[var(--border)] rounded-lg p-3 overflow-auto max-h-72"><pre>${this.escapeHtml(msg.unified_diff)}</pre></div>`;
                   this.addMessage('system', 'Diff', html);
                 }
+                this.anchorAssistantToBottom();
             break;
 
               case 'task_complete': {
@@ -822,6 +980,7 @@
                     this.lastAssistantEl = this.addMessage('assistant', 'Codex', this.renderText(finalText));
                   }
                   this.lastAssistantText = finalText;
+                  this.updateLastAssistantMessageInActiveConversation(this.renderText(finalText));
                 }
                 this.hideTypingIndicator(this.lastAssistantEl);
                 this.isRunning = false;
@@ -839,6 +998,12 @@
                 this.addMessage('system', 'Session', 'Shut down');
             break;
 
+              case 'turn_aborted':
+                this.isRunning = false;
+                this.status = 'Idle';
+                this.addMessage('system', 'Task', 'Canceled');
+            break;
+
               default:
                 // Fallback: pretty-print unknown events for visibility
                 const pretty = this.escapeHtml(JSON.stringify(event, null, 2)).replace(/\n/g, '<br>');
@@ -847,9 +1012,9 @@
           },
 
           // UI helpers
-          addMessage(type, author, content) {
+          addMessage(type, author, content, timestampMs) {
         const chatMessages = document.getElementById('chatMessages');
-        const time = new Date().toLocaleTimeString();
+        const time = new Date(timestampMs || Date.now()).toLocaleTimeString();
         
         const messageEl = document.createElement('div');
             messageEl.className = 'animate-slide-up';
@@ -859,23 +1024,23 @@
             let messageClass = '';
             
             if (type === 'user') {
-              avatarClass = 'bg-gradient-to-br from-emerald-500 to-teal-600';
+              avatarClass = 'bg-[var(--accent)]';
               avatar = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path>
                        </svg>`;
-              messageClass = 'message-bubble user bg-gradient-to-r from-emerald-800/40 to-teal-700/30 rounded-2xl rounded-tr-lg p-4 border border-emerald-600/30 shadow-lg ml-8';
+              messageClass = 'message-bubble user rounded-2xl rounded-tr-lg p-4 border shadow-lg ml-8';
             } else if (type === 'assistant') {
-              avatarClass = 'bg-gradient-to-br from-blue-500 to-purple-600';
+              avatarClass = 'bg-[var(--panel-2)]';
               avatar = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                        </svg>`;
-              messageClass = 'message-bubble assistant bg-gradient-to-r from-slate-800/60 to-slate-700/40 rounded-2xl rounded-tl-lg p-4 border border-slate-700/40 shadow-lg mr-8';
+              messageClass = 'message-bubble assistant rounded-2xl rounded-tl-lg p-4 border shadow-lg mr-8';
             } else {
-              avatarClass = 'bg-gradient-to-br from-slate-600 to-slate-700';
+              avatarClass = 'bg-[var(--panel-2)]';
               avatar = `<svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
                        </svg>`;
-              messageClass = 'bg-gradient-to-r from-slate-700/40 to-slate-600/30 rounded-xl p-4 border border-slate-600/30 shadow-lg';
+              messageClass = 'bg-[var(--panel-2)] rounded-xl p-4 border border-[var(--border)] shadow-lg';
             }
         
         messageEl.innerHTML = `
@@ -887,7 +1052,7 @@
                   <div class="flex items-center space-x-2 mb-2">
                     <span class="font-semibold text-slate-200">${author}</span>
                     <span class="text-xs text-slate-500">${time}</span>
-                    ${type === 'system' ? `<span class="text-xs bg-slate-700/50 px-2 py-1 rounded-full border border-slate-600/30">${author}</span>` : ''}
+                    ${type === 'system' ? `<span class="text-xs bg-[var(--panel-2)] px-2 py-1 rounded-full border border-[var(--border)]">${author}</span>` : ''}
                   </div>
                   <div class="${messageClass} message-content">
                     ${content}
@@ -912,7 +1077,7 @@
           // Utility functions
           renderText(text) {
             let s = this.escapeHtml(text);
-            s = s.replace(/```([\s\S]*?)```/g, (_m, p1) => `<div class="bg-dark-900/60 border border-slate-700/50 rounded-lg p-4 mt-3 font-mono text-sm overflow-x-auto">${p1}</div>`);
+            s = s.replace(/```([\s\S]*?)```/g, (_m, p1) => `<div class="bg-[var(--panel-2)] border border-[var(--border)] rounded-lg p-4 mt-3 font-mono text-sm overflow-x-auto">${p1}</div>`);
             s = s.replace(/\*\*([^*]+)\*\*/g, '<strong class="font-semibold">$1</strong>');
             s = s.replace(/\n/g, '<br>');
             return s;
@@ -936,6 +1101,19 @@
             if (force || nearBottom) {
               chatMessages.scrollTop = chatMessages.scrollHeight;
             }
+          },
+
+          // Ensure the assistant bubble stays at the bottom, so tool cards don't
+          // appear after it. If cards were appended after the assistant, move the
+          // assistant bubble to the end of the chat container to preserve order.
+          anchorAssistantToBottom() {
+            const chatMessages = document.getElementById('chatMessages');
+            if (this.lastAssistantEl && this.lastAssistantEl.parentElement === chatMessages) {
+              if (chatMessages.lastElementChild !== this.lastAssistantEl) {
+                chatMessages.appendChild(this.lastAssistantEl);
+              }
+            }
+            this.scrollToBottom();
           },
 
           escapeHtml(str) {
@@ -1002,8 +1180,9 @@
                     </div>
                     <div class="text-xs text-slate-400">${this.escapeHtml(info.cwd || '')}</div>
                   </div>
-                  <div class="font-mono text-sm bg-dark-900/60 border border-slate-700/50 rounded-lg p-3 overflow-x-auto">$ ${commandStr}</div>
-                  <div class="grid grid-cols-2 gap-3">
+                  <button class="exec-toggle text-xs px-2 py-1 rounded bg-slate-700/40 hover:bg-slate-600/40 border border-slate-600/40">Collapse</button>
+                  <div class="font-mono text-sm bg-[var(--panel-2)] border border-[var(--border)] rounded-lg p-3 overflow-x-auto">$ ${commandStr}</div>
+                  <div class="exec-body grid grid-cols-2 gap-3">
                     <div>
                       <div class="text-xs text-slate-400 mb-1">stdout</div>
                       <pre class="stdout text-xs font-mono bg-dark-900/50 border border-slate-700/40 rounded-lg p-3 overflow-auto max-h-56"></pre>
@@ -1023,6 +1202,14 @@
                 stderrEl: el.querySelector('pre.stderr'),
               };
               this.execCards.set(callId, card);
+              const body = el.querySelector('.exec-body');
+              const toggle = el.querySelector('.exec-toggle');
+              if (toggle && body) {
+                toggle.addEventListener('click', () => {
+                  const collapsed = body.classList.toggle('hidden');
+                  toggle.textContent = collapsed ? 'Expand' : 'Collapse';
+                });
+              }
             }
             return card;
           },
@@ -1088,8 +1275,9 @@
                     <div class="patch-spinner w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></div>
                   </div>
                   <div class="text-xs text-slate-400">${info.auto_approved ? 'auto-approved' : 'user-approved'}</div>
-                  <div class="font-mono text-xs bg-dark-900/60 border border-slate-700/50 rounded-lg p-3 overflow-auto max-h-56"><pre>${this.escapeHtml(JSON.stringify(info.changes || {}, null, 2))}</pre></div>
-                  <div>
+                  <button class="patch-toggle text-xs px-2 py-1 rounded bg-slate-700/40 hover:bg-slate-600/40 border border-slate-600/40">Collapse</button>
+                  <div class="patch-body">
+                    <div class="font-mono text-xs bg-[var(--panel-2)] border border-[var(--border)] rounded-lg p-3 overflow-auto max-h-56"><pre>${this.escapeHtml(JSON.stringify(info.changes || {}, null, 2))}</pre></div>
                     <div class="text-xs text-slate-400 mb-1">apply_patch output</div>
                     <pre class="patch-stdout text-xs font-mono bg-dark-900/50 border border-slate-700/40 rounded-lg p-3 overflow-auto max-h-56"></pre>
                     <pre class="patch-stderr text-xs font-mono bg-dark-900/50 border border-red-700/40 rounded-lg p-3 overflow-auto max-h-56 text-red-300 mt-2"></pre>
@@ -1104,6 +1292,14 @@
                 stderrEl: el.querySelector('.patch-stderr'),
               };
               this.patchCards.set(callId, card);
+              const body = el.querySelector('.patch-body');
+              const toggle = el.querySelector('.patch-toggle');
+              if (toggle && body) {
+                toggle.addEventListener('click', () => {
+                  const collapsed = body.classList.toggle('hidden');
+                  toggle.textContent = collapsed ? 'Expand' : 'Collapse';
+                });
+              }
             }
             return card;
           },
@@ -1131,11 +1327,7 @@
             
             switch (name) {
               case 'new':
-                document.getElementById('chatMessages').innerHTML = '';
-                this.lastTaskId = '';
-                this.totalTokens = 0;
-                this.model = '—';
-                this.addMessage('system', 'Session', 'Started a new chat');
+                this.startNewChat();
                 break;
                 
               case 'status':
@@ -1174,6 +1366,179 @@
 
           showError(message) {
             this.addMessage('system', 'Error', message);
+          },
+
+          // Conversations persistence helpers
+          ensureActiveConversation() {
+            if (this.activeConversationId && this.findConversation(this.activeConversationId)) return;
+            const id = this.generateLocalId();
+            const now = Date.now();
+            const conv = { id, title: '', created_at: now, updated_at: now, messages: [] };
+            this.conversations.push(conv);
+            this.activeConversationId = id;
+            this.saveConversationsToStorage();
+          },
+
+          startNewChat() {
+            document.getElementById('chatMessages').innerHTML = '';
+            this.lastTaskId = '';
+            this.totalTokens = 0;
+            this.model = '—';
+            const id = this.generateLocalId();
+            const now = Date.now();
+            this.conversations.push({ id, title: '', created_at: now, updated_at: now, messages: [] });
+            this.activeConversationId = id;
+            this.saveConversationsToStorage();
+            this.addMessage('system', 'Session', 'Started a new chat');
+          },
+
+          async openConversation(id) {
+            const conv = this.findConversation(id);
+            if (!conv) return;
+            this.activeConversationId = conv.id;
+            // If we don't have messages locally, try loading from server persistence
+            if (!conv.messages || conv.messages.length === 0 && !id.startsWith('local-')) {
+              await this.loadServerConversation(id);
+            }
+            this.renderConversationById(conv.id);
+            this.saveConversationsToStorage();
+          },
+
+          removeConversation(id) {
+            const idx = this.conversations.findIndex(c => c.id === id);
+            if (idx === -1) return;
+            this.conversations.splice(idx, 1);
+            if (this.activeConversationId === id) {
+              this.activeConversationId = this.conversations[0]?.id || '';
+              this.renderConversationById(this.activeConversationId);
+            }
+            this.saveConversationsToStorage();
+          },
+
+          renderConversationById(id) {
+            const chatMessages = document.getElementById('chatMessages');
+            chatMessages.innerHTML = '';
+            const conv = this.findConversation(id);
+            if (!conv) return;
+            for (const m of conv.messages || []) {
+              this.addMessage(m.role === 'assistant' ? 'assistant' : (m.role === 'user' ? 'user' : 'system'), m.author || (m.role === 'assistant' ? 'Codex' : 'You'), m.content_html || '', m.ts);
+            }
+            this.scrollToBottom(true);
+          },
+
+          appendMessageToActiveConversation({ role, author, content_html }) {
+            const conv = this.findConversation(this.activeConversationId);
+            if (!conv) return;
+            const ts = Date.now();
+            conv.messages.push({ role, author, content_html, ts });
+            conv.updated_at = ts;
+            this.saveConversationsToStorage();
+          },
+
+          updateLastAssistantMessageInActiveConversation(content_html) {
+            const conv = this.findConversation(this.activeConversationId);
+            if (!conv || !conv.messages || conv.messages.length === 0) return;
+            for (let i = conv.messages.length - 1; i >= 0; i--) {
+              if (conv.messages[i].role === 'assistant') {
+                conv.messages[i].content_html = content_html;
+                conv.updated_at = Date.now();
+                break;
+              }
+            }
+            this.saveConversationsToStorage();
+          },
+
+          maybeSetConversationTitleFrom(text) {
+            const conv = this.findConversation(this.activeConversationId);
+            if (!conv) return;
+            if (!conv.title) {
+              const t = text.trim().replace(/\s+/g, ' ').slice(0, 60);
+              conv.title = t || 'Untitled';
+              this.saveConversationsToStorage();
+            }
+          },
+
+          adoptServerConversationId(serverId) {
+            if (!serverId) return;
+            const conv = this.findConversation(this.activeConversationId);
+            if (!conv) return;
+            if (conv.id === serverId) return;
+            conv.id = serverId;
+            this.activeConversationId = serverId;
+            this.saveConversationsToStorage();
+          },
+
+          findConversation(id) {
+            return this.conversations.find(c => c.id === id);
+          },
+
+          sortedConversations() {
+            return [...this.conversations].sort((a, b) => (b.updated_at || 0) - (a.updated_at || 0));
+          },
+
+          saveConversationsToStorage() {
+            const payload = { active_id: this.activeConversationId, conversations: this.conversations };
+            try { localStorage.setItem('codex_conversations_v1', JSON.stringify(payload)); } catch (_) {}
+          },
+
+          loadConversationsFromStorage() {
+            try {
+              const s = localStorage.getItem('codex_conversations_v1');
+              if (!s) return;
+              const parsed = JSON.parse(s);
+              if (Array.isArray(parsed?.conversations)) {
+                this.conversations = parsed.conversations;
+              }
+              if (parsed?.active_id) {
+                this.activeConversationId = parsed.active_id;
+              }
+            } catch (_) {}
+          },
+
+          generateLocalId() {
+            const rand = crypto.getRandomValues(new Uint32Array(4));
+            return 'local-' + Date.now().toString(36) + '-' + Array.from(rand).map(n => n.toString(36)).join('');
+          },
+
+          async refreshServerConversations() {
+            try {
+              const res = await fetch('/api/conversations');
+              if (!res.ok) return;
+              const data = await res.json();
+              const serverConvs = (data?.conversations || []);
+              // Merge minimal metadata into local list
+              for (const s of serverConvs) {
+                const existing = this.conversations.find(c => c.id === s.id);
+                if (existing) {
+                  if (!existing.title && s.title) existing.title = s.title;
+                  if (!existing.created_at && s.created_at) existing.created_at = s.created_at;
+                  existing.updated_at = s.updated_at_ms || existing.updated_at;
+                } else {
+                  this.conversations.push({ id: s.id, title: s.title, created_at: s.created_at, updated_at: s.updated_at_ms, messages: [] });
+                }
+              }
+              this.saveConversationsToStorage();
+            } catch (_) {}
+          },
+
+          async loadServerConversation(id) {
+            try {
+              const res = await fetch(`/api/conversations/${encodeURIComponent(id)}`);
+              if (!res.ok) return;
+              const data = await res.json();
+              const conv = this.findConversation(id);
+              if (!conv) return;
+              const msgs = Array.isArray(data?.messages) ? data.messages : [];
+              conv.messages = msgs.map(m => ({
+                role: m.role === 'assistant' ? 'assistant' : 'user',
+                author: m.role === 'assistant' ? 'Codex' : 'You',
+                content_html: this.renderText(String(m.text || '')),
+                ts: undefined,
+              }));
+              // Prefer server-provided title/created_at if present
+              if (data?.created_at && !conv.created_at) conv.created_at = data.created_at;
+              this.saveConversationsToStorage();
+            } catch (_) {}
           }
         }
       }
