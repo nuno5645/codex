@@ -1,0 +1,22 @@
+[package]
+name = "codex-web-server"
+version = "0.0.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "process"] }
+tower = "0.5"
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+once_cell = "1"
+tokio-stream = { version = "0.1", features = ["sync"] }
+futures = "0.3"
+
+codex-core = { path = "../core" }
+codex-protocol = { path = "../protocol" }

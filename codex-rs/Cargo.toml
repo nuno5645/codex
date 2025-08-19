@@ -18,6 +18,7 @@ members = [
     "protocol",
     "protocol-ts",
     "tui",
+    "web-server",
 ]
 resolver = "2"
 
@@ -48,3 +49,6 @@ codegen-units = 1
 [patch.crates-io]
 # ratatui = { path = "../../ratatui" }
 ratatui = { git = "https://github.com/nornagon/ratatui", branch = "nornagon-v0.29.0-patch" }
+
+[workspace.metadata.codex]
+web_server_hint = "Run: cargo run -p codex-web-server and open http://localhost:4321"
