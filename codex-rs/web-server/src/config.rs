@@ -1,5 +1,6 @@
 use std::path::PathBuf;
 use tracing::warn;
+use tracing::info; // Added import for info! macro
 
 // Auto-detect the codex-linux-sandbox helper on Linux so sandboxed commands work.
 #[cfg(target_os = "linux")]
@@ -18,7 +19,7 @@ pub fn detect_linux_sandbox_exe() -> Option<PathBuf> {
         if let Some(dir) = me.parent() {
             let candidate = dir.join("codex-linux-sandbox");
             if candidate.is_file() { 
-                info!("auto-detected codex-linux-sandbox beside executable: {}", candidate.display()); 
+            info!("auto-detected codex-linux-sandbox beside executable: {}", candidate.display()); 
                 return Some(candidate); 
             }
         }
