@@ -49,6 +49,9 @@
             <div class="controls">
               <label class="toggle"><input id="full-auto" type="checkbox" /> Full auto (no approvals)</label>
               <label class="toggle"><input id="show-reasoning" type="checkbox" checked /> reasoning</label>
+              <label class="toggle">model: <input id="model" type="text" size="20" placeholder="inherit config" /></label>
+              <label class="toggle">profile: <input id="profile" type="text" size="16" placeholder="default" /></label>
+              <label class="toggle">overrides: <input id="overrides" type="text" size="32" placeholder="key=value, a.b=true" /></label>
               <label class="toggle">cwd: <input id="cwd" type="text" size="36" placeholder="inherit server working dir" /></label>
               <label class="toggle">images: <input id="images" type="file" accept="image/*" multiple /></label>
               <button id="run" class="btn">Run (Enter)</button>

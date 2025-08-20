@@ -22,19 +22,31 @@ use codex_core::{
     protocol::{Event, EventMsg, InputItem, Op},
 };
 use codex_protocol::config_types::SandboxMode;
+use codex_common::CliConfigOverrides;
 
 pub async fn start_task(
     State(state): State<AppState>,
     Json(query): Json<StartQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let StartQuery { prompt, full_auto: _, cwd, images, conversation_id } = query;
+    let StartQuery { prompt, full_auto: _, cwd, images, conversation_id, model, config_profile, overrides } = query;
 
     let sandbox_exe = detect_linux_sandbox_exe();
 
-    // Build ConfigOverrides similar to exec run_main
+    // Parse generic `-c key=value` style overrides (TOML values)
+    let cli_overrides_vec = if let Some(raw) = overrides {
+        let cli = CliConfigOverrides { raw_overrides: raw };
+        match cli.parse_overrides() {
+            Ok(v) => v,
+            Err(e) => return Err((StatusCode::BAD_REQUEST, format!("invalid overrides: {e}"))),
+        }
+    } else {
+        Vec::new()
+    };
+
+    // Build ConfigOverrides similar to exec run_main, but allow model/profile overrides from request
     let overrides = ConfigOverrides {
-        model: None,
-        config_profile: None,
+        model,
+        config_profile,
         approval_policy: Some(codex_core::protocol::AskForApproval::Never),
         sandbox_mode: Some(SandboxMode::WorkspaceWrite),
         cwd: cwd.map(std::path::PathBuf::from).or(Some(state.working_directory.clone())),
@@ -50,7 +62,7 @@ pub async fn start_task(
     debug!("Creating config with overrides: approval_policy={:?}, sandbox_mode={:?}, include_apply_patch_tool={:?}, include_plan_tool={:?}", 
            overrides.approval_policy, overrides.sandbox_mode, overrides.include_apply_patch_tool, overrides.include_plan_tool);
     
-    let config = Config::load_with_cli_overrides(Vec::new(), overrides)
+    let config = Config::load_with_cli_overrides(cli_overrides_vec, overrides)
         .map_err(|e| {
             error!("Failed to load config: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
@@ -238,26 +250,38 @@ pub async fn browse_directory(
     State(state): State<AppState>,
     Query(query): Query<BrowseQuery>
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let current_path = query.path.unwrap_or_else(|| state.working_directory.to_string_lossy().to_string());
-    
-    let path_buf = PathBuf::from(&current_path);
-    
-    // Ensure the path is within the working directory
-    if !path_buf.starts_with(&state.working_directory) {
-        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
-    }
-    
-    if !path_buf.exists() {
+    // Determine requested path: default to server working directory
+    let requested = query
+        .path
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.working_directory.clone());
+
+    // Canonicalize both working directory and requested path to avoid Unicode normalization issues
+    let wd_canon = state
+        .working_directory
+        .canonicalize()
+        .unwrap_or_else(|_| state.working_directory.clone());
+
+    // Validate existence and directory type early
+    if !requested.exists() {
         return Err((StatusCode::NOT_FOUND, "Path does not exist".to_string()));
     }
-    
-    if !path_buf.is_dir() {
+    if !requested.is_dir() {
         return Err((StatusCode::BAD_REQUEST, "Path is not a directory".to_string()));
     }
 
+    let path_canon = requested
+        .canonicalize()
+        .unwrap_or_else(|_| requested.clone());
+
+    // Ensure the path is within the working directory (using canonical paths)
+    if !path_canon.starts_with(&wd_canon) {
+        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
+    }
+
     let mut items = Vec::new();
-    
-    match std::fs::read_dir(&path_buf) {
+
+    match std::fs::read_dir(&path_canon) {
         Ok(entries) => {
             for entry in entries {
                 if let Ok(entry) = entry {
@@ -292,11 +316,17 @@ pub async fn browse_directory(
             _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
         }
     });
-    
-    let parent_path = path_buf.parent().map(|p| p.to_string_lossy().to_string());
-    
+
+    // Only expose a parent path if it remains within the working directory
+    let parent_path = path_canon
+        .parent()
+        .and_then(|p| {
+            let pc = p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+            if pc.starts_with(&wd_canon) { Some(pc.to_string_lossy().to_string()) } else { None }
+        });
+
     Ok(Json(BrowseResponse {
-        current_path,
+        current_path: path_canon.to_string_lossy().to_string(),
         parent_path,
         items,
     }))
@@ -306,18 +336,27 @@ pub async fn search_files(
     State(state): State<AppState>,
     Query(query): Query<SearchFilesQuery>
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let cwd = query
+    let cwd_input: PathBuf = query
         .cwd
-        .unwrap_or_else(|| state.working_directory.to_string_lossy().to_string());
-    let cwd_path = PathBuf::from(&cwd);
-    
-    // Ensure the path is within the working directory
-    if !cwd_path.starts_with(&state.working_directory) {
-        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
-    }
-    
-    if !cwd_path.exists() || !cwd_path.is_dir() {
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state.working_directory.clone());
+
+    let wd_canon = state
+        .working_directory
+        .canonicalize()
+        .unwrap_or_else(|_| state.working_directory.clone());
+
+    if !cwd_input.exists() || !cwd_input.is_dir() {
         return Err((StatusCode::BAD_REQUEST, "cwd must be an existing directory".to_string()));
+    }
+
+    let cwd_canon = cwd_input
+        .canonicalize()
+        .unwrap_or_else(|_| cwd_input.clone());
+
+    // Ensure the path is within the working directory (canonical paths)
+    if !cwd_canon.starts_with(&wd_canon) {
+        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
     }
 
     let needle = query.q.unwrap_or_default().to_lowercase();
@@ -325,7 +364,7 @@ pub async fn search_files(
 
     let mut items = Vec::new();
     let mut queue = VecDeque::new();
-    queue.push_back(cwd_path.clone());
+    queue.push_back(cwd_canon.clone());
     while let Some(dir) = queue.pop_front() {
         // Best-effort: skip hidden directories at the top-level traversal
         if let Some(name) = dir.file_name().and_then(|n| n.to_str()) {
@@ -356,7 +395,7 @@ pub async fn search_files(
 
             let abs_path = path.to_string_lossy().to_string();
             let rel_path = path
-                .strip_prefix(&cwd_path)
+                .strip_prefix(&cwd_canon)
                 .unwrap_or(path.as_path())
                 .to_string_lossy()
                 .to_string();
@@ -376,7 +415,7 @@ pub async fn search_files(
     });
 
     Ok(Json(SearchFilesResponse {
-        cwd,
+        cwd: cwd_canon.to_string_lossy().to_string(),
         query: needle,
         items,
     }))

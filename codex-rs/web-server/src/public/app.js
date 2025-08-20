@@ -9,6 +9,9 @@ const cwdEl = document.getElementById('cwd');
 const imagesEl = document.getElementById('images');
 const attachmentsEl = document.getElementById('attachments');
 const showReasoningEl = document.getElementById('show-reasoning');
+const modelEl = document.getElementById('model');
+const profileEl = document.getElementById('profile');
+const overridesEl = document.getElementById('overrides');
 const statusTokens = document.getElementById('status-tokens');
 const statusModel = document.getElementById('status-model');
 const statusSession = document.getElementById('status-session');
@@ -23,6 +26,7 @@ const refreshFilesBtn = document.getElementById('refresh-files');
 const currentPathEl = document.getElementById('current-path');
 const upDirBtn = document.getElementById('up-dir');
 const setCwdBtn = document.getElementById('set-cwd');
+const inputBoxEl = document.querySelector('.input-box');
 // Chats modal elements
 const chatsModal = document.getElementById('chats-modal');
 const openChatsBtn = document.getElementById('open-chats');
@@ -232,6 +236,11 @@ function resetStream() {
 }
 
 // --- File picker logic ---
+function isProbablyImageName(name) {
+  if (!name) return false;
+  const n = String(name).toLowerCase();
+  return /(\.png|\.jpg|\.jpeg|\.gif|\.webp|\.bmp|\.tif|\.tiff|\.heic|\.heif)$/i.test(n);
+}
 function renderFileList(items) {
   if (!fileListEl) return;
   fileListEl.innerHTML = '';
@@ -243,7 +252,8 @@ function renderFileList(items) {
     icon.textContent = it.is_dir ? '📁' : '📄';
     const name = document.createElement('div');
     name.className = 'name';
-    name.textContent = it.name || it.rel_path || '(unnamed)';
+    const fileNameStr = it.name || it.rel_path || '(unnamed)';
+    name.textContent = fileNameStr;
     const meta = document.createElement('div');
     meta.className = 'meta';
     if (!it.is_dir && typeof it.size === 'number') {
@@ -255,13 +265,36 @@ function renderFileList(items) {
     row.appendChild(icon);
     row.appendChild(name);
     row.appendChild(meta);
+
+    // Compute the full path once for click + drag
+    const fullPath = it.path || it.abs_path || '';
+
+    // Make items draggable – but disable dragging for image files
+    const isImageItem = !it.is_dir && isProbablyImageName(fileNameStr);
+    if (!isImageItem) {
+      row.setAttribute('draggable', 'true');
+      row.title = 'Drag to input to insert path';
+      row.addEventListener('dragstart', (e) => {
+        try {
+          row.classList.add('dragging');
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'copy';
+            // Custom type for internal drops plus a plain-text fallback
+            e.dataTransfer.setData('application/x-codex-path', fullPath);
+            e.dataTransfer.setData('text/plain', fullPath);
+          }
+        } catch {}
+      });
+      row.addEventListener('dragend', () => { row.classList.remove('dragging'); });
+    } else {
+      row.title = 'Click to insert path (drag disabled for images)';
+    }
+
     row.addEventListener('click', () => {
-      const fullPath = it.path || it.abs_path || '';
       if (it.is_dir) {
         browse(fullPath);
       } else if (fullPath) {
         line('selected file: ' + fullPath, 'dim');
-        // Append path into the prompt for convenience
         const sep = promptEl.value && !/\s$/.test(promptEl.value) ? ' ' : '';
         promptEl.value = (promptEl.value || '') + sep + fullPath;
         promptEl.focus();
@@ -320,6 +353,21 @@ async function start(prompt) {
     cwd: cwdEl.value.trim() || undefined,
     images: images.length ? images : undefined,
     conversation_id: currentConversationId || undefined,
+    model: (modelEl && modelEl.value.trim()) ? modelEl.value.trim() : undefined,
+    config_profile: (profileEl && profileEl.value.trim()) ? profileEl.value.trim() : undefined,
+  };
+
+  // Parse overrides from input string into ["key=value", ...]
+  if (overridesEl && overridesEl.value.trim()) {
+    const raw = overridesEl.value.trim();
+    // Split on commas or newlines
+    const parts = raw
+      .split(/[\n,]/g)
+      .map(s => s.trim())
+      .filter(s => s.length > 0 && s.includes('='));
+    if (parts.length > 0) {
+      body.overrides = parts;
+    }
   };
 
   richLine([{tag:'tag', text:'user     '}, {text: prompt || '(images only)'}], 'user');
@@ -347,6 +395,7 @@ async function start(prompt) {
   pastedImages = [];
   renderAttachments();
   if (imagesEl) imagesEl.value = '';
+  // Keep model/profile/overrides as-is for next run
 }
 
 function updateExecStatus() {
@@ -844,6 +893,9 @@ if (openChatsBtn) openChatsBtn.addEventListener('click', () => { chatsModal?.set
 if (closeChatsBtn) closeChatsBtn.addEventListener('click', () => { chatsModal?.removeAttribute('open'); });
 if (chatsModal) chatsModal.addEventListener('click', (e) => { if (e.target === chatsModal) chatsModal.removeAttribute('open'); });
 
+// Populate the sidebar with the initial working directory on load
+try { browse(null); } catch {}
+
 runBtn.addEventListener('click', async () => {
   const text = promptEl.value;
   promptEl.value = '';
@@ -892,34 +944,169 @@ promptEl.addEventListener('paste', async (e) => {
   } catch {}
 });
 
-cancelBtn.addEventListener('click', async () => {
-  if (!currentTaskId) return;
-  try {
-    await fetch(`/api/cancel/${encodeURIComponent(currentTaskId)}`, { method: 'POST' });
-    line('cancel sent', 'dim');
-  } catch {}
-});
-compactBtn.addEventListener('click', async () => {
-  if (!currentTaskId) return;
-  try {
-    await fetch(`/api/compact/${encodeURIComponent(currentTaskId)}`, { method: 'POST' });
-    line('compact requested', 'dim');
-  } catch {}
-});
+// --- Drag & drop into the prompt (from sidebar or OS) ---
+// Helpers to collect files from OS drops, including folders
+async function readAllDirectoryEntries(dirReader) {
+  const entries = [];
+  while (true) {
+    const batch = await new Promise((res) => dirReader.readEntries(res));
+    if (!batch || batch.length === 0) break;
+    entries.push(...batch);
+  }
+  return entries;
+}
 
-// Initial boot
-line('Codex Web CLI ready. Type a prompt to begin.', 'dim');
-// Initialize file browser and pre-hydrate chats (modal)
-browse();
-hydrateConversationsList();
-// fetch current write-enabled state
-(async () => {
+async function traverseFsEntry(entry, basePath, out) {
   try {
-    const r = await fetch('/api/write_enabled');
-    if (r.ok) {
-      const j = await r.json();
-      // OkResponse { ok: bool }
-      if (typeof j.ok === 'boolean') writeEnableEl.checked = !!j.ok;
+    if (entry.isFile) {
+      const file = await new Promise((res, rej) => entry.file(res, rej));
+      const relPath = basePath ? `${basePath}/${file.name}` : (file.webkitRelativePath || file.name);
+      out.push({ file, relPath });
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const entries = await readAllDirectoryEntries(reader);
+      for (const child of entries) {
+        await traverseFsEntry(child, basePath ? `${basePath}/${entry.name}` : entry.name, out);
+      }
     }
   } catch {}
-})();
+}
+
+async function traverseFsHandle(handle, basePath, out) {
+  try {
+    if (handle.kind === 'file') {
+      const file = await handle.getFile();
+      const relPath = basePath ? `${basePath}/${file.name}` : (file.webkitRelativePath || file.name);
+      out.push({ file, relPath });
+    } else if (handle.kind === 'directory') {
+      for await (const [name, child] of handle.entries()) {
+        if (child.kind === 'file') {
+          const file = await child.getFile();
+          const relPath = basePath ? `${basePath}/${name}` : name;
+          out.push({ file, relPath });
+        } else if (child.kind === 'directory') {
+          await traverseFsHandle(child, basePath ? `${basePath}/${name}` : name, out);
+        }
+      }
+    }
+  } catch {}
+}
+
+async function collectDroppedFiles(dt) {
+  const out = [];
+  try {
+    const items = Array.from(dt.items || []);
+    if (items.length) {
+      // Try per-item modern FS Access API and WebKit API without gating on the first item
+      let handledAny = false;
+      for (const it of items) {
+        if (it && typeof it.getAsFileSystemHandle === 'function') {
+          try {
+            const h = await it.getAsFileSystemHandle();
+            if (h) {
+              await traverseFsHandle(h, '', out);
+              handledAny = true;
+              continue;
+            }
+          } catch {}
+        }
+        if (it && typeof it.webkitGetAsEntry === 'function') {
+          try {
+            const entry = it.webkitGetAsEntry();
+            if (entry) {
+              await traverseFsEntry(entry, '', out);
+              handledAny = true;
+              continue;
+            }
+          } catch {}
+        }
+      }
+      if (handledAny) return out;
+    }
+    // Final fallback: plain FileList (will include files but not folders)
+    const files = Array.from(dt.files || []);
+    for (const f of files) out.push({ file: f, relPath: f.webkitRelativePath || f.name });
+  } catch {}
+  return out;
+}
+function setDropActive(active) {
+  if (inputBoxEl) {
+    if (active) inputBoxEl.classList.add('drop-target');
+    else inputBoxEl.classList.remove('drop-target');
+  }
+}
+
+async function handleDropOnPrompt(e) {
+  try {
+    e.preventDefault();
+    // Ensure page-wide handlers don't interfere
+    e.stopPropagation();
+    setDropActive(false);
+    const dt = e.dataTransfer;
+    if (!dt) return;
+
+    // Prefer internal drags from our sidebar (file picker).
+    // Only treat as internal if our custom type is present to avoid misclassifying
+    // OS drags where browsers expose absolute paths in text/plain.
+    const hasInternalType = Array.from(dt.types || []).includes('application/x-codex-path');
+    const internal = hasInternalType ? dt.getData('application/x-codex-path') : '';
+    if (hasInternalType && internal && internal.trim().startsWith('/')) {
+      const path = internal.trim();
+      const sep = promptEl.value && !/\s$/.test(promptEl.value) ? ' ' : '';
+      promptEl.value = (promptEl.value || '') + sep + path;
+      promptEl.focus();
+      return;
+    }
+
+    // OS drops (files or folders): append relative paths or names only; do not attach images on drop
+    const collected = await collectDroppedFiles(dt);
+    if (collected.length) {
+      const names = collected.map(x => x.relPath || (x.file && x.file.name)).filter(Boolean);
+      if (names.length) {
+        const sep = promptEl.value && !/\s$/.test(promptEl.value) ? ' ' : '';
+        promptEl.value = (promptEl.value || '') + sep + names.join(' ');
+        promptEl.focus();
+      }
+      return;
+    }
+  } catch {}
+}
+
+// Enable drag & drop into the prompt (and the whole input box)
+const dropTargets = [promptEl, inputBoxEl].filter(Boolean);
+for (const el of dropTargets) {
+  el.addEventListener('dragenter', (e) => { e.preventDefault(); setDropActive(true); });
+  el.addEventListener('dragover',  (e) => { e.preventDefault(); setDropActive(true); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+  el.addEventListener('dragleave', (e) => { e.preventDefault(); setDropActive(false); });
+  el.addEventListener('drop', handleDropOnPrompt);
+}
+
+// Optional nicety: allow dropping a folder/file onto the CWD field to set it
+cwdEl.addEventListener('dragover', (e) => { e.preventDefault(); cwdEl.classList.add('drop-target'); if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy'; });
+cwdEl.addEventListener('dragleave', () => cwdEl.classList.remove('drop-target'));
+cwdEl.addEventListener('drop', (e) => {
+  e.preventDefault();
+  cwdEl.classList.remove('drop-target');
+  const dt = e.dataTransfer;
+  if (!dt) return;
+  const path = dt.getData('application/x-codex-path') || dt.getData('text/plain');
+  if (path && path.trim().startsWith('/')) {
+    cwdEl.value = path.trim();
+    line('cwd set: ' + cwdEl.value, 'dim');
+  }
+});
+
+// Prevent the browser from navigating on accidental page-wide drops,
+// but allow drops within our input box or prompt textarea.
+document.addEventListener('dragover', (e) => {
+  // Always prevent default to indicate a drop target exists somewhere
+  e.preventDefault();
+});
+document.addEventListener('drop', (e) => {
+  const t = e.target;
+  const inPrompt = promptEl && (t === promptEl || (t && promptEl.contains(t)));
+  const inBox = inputBoxEl && (t === inputBoxEl || (t && inputBoxEl.contains(t)));
+  if (!inPrompt && !inBox) {
+    e.preventDefault();
+  }
+});

@@ -28,6 +28,14 @@ pub struct StartQuery {
     pub images: Option<Vec<String>>, // data URLs or remote URLs
     #[serde(default)]
     pub conversation_id: Option<String>,
+    // New: model/profile/overrides selections similar to CLI
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub config_profile: Option<String>,
+    /// Generic config overrides in the form "key=value" (parsed as TOML values)
+    #[serde(default)]
+    pub overrides: Option<Vec<String>>, // e.g. ["tui.hide_agent_reasoning=true"]
 }
 
 #[derive(Debug, Serialize)]

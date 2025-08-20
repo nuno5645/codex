@@ -262,7 +262,7 @@ header .pill {
       background: #0b1113;
       color: var(--text);
     }
-    .file-item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: pointer; display: flex; align-items: center; gap: 10px; }
+    .file-item { padding: 10px 12px; border-bottom: 1px solid var(--border); cursor: grab; display: flex; align-items: center; gap: 10px; }
     .file-item:hover { background: #0d1517; }
     .file-item .icon { width: 18px; text-align: center; opacity: 0.85; }
     .file-item .name { flex: 1; color: var(--text); font-weight: 600; }
@@ -286,3 +286,8 @@ header .pill {
     .modal .modal-title { font-weight: 700; color: var(--green-3); }
     .modal .toolbar { padding: 10px; border-bottom: 1px solid var(--border); display: flex; gap: 6px; align-items: center; }
     .modal .list { overflow: auto; flex: 1; }
+
+
+/* Drag-and-drop enhancements */
+.file-item.dragging { opacity: 0.6; }
+.input-box.drop-target, #cwd.drop-target { outline: 2px dashed var(--accent); outline-offset: 3px; background: rgba(135,255,135,0.06); }
