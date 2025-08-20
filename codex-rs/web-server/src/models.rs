@@ -1,10 +1,14 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use codex_core::{CodexConversation, protocol::Event};
 
 #[derive(Clone)]
 pub struct AppState {
     pub manager: Arc<codex_core::ConversationManager>,
+    pub working_directory: PathBuf,
+    pub write_enabled: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]

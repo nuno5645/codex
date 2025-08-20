@@ -1,7 +1,9 @@
 use crate::handlers::*;
 use crate::models::AppState;
 
+use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use axum::http::Method;
 use axum::routing::{get, post};
 use axum::Router;
@@ -9,9 +11,11 @@ use codex_core::ConversationManager;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeDir;
 
-pub fn create_app_state() -> AppState {
+pub fn create_app_state(working_directory: PathBuf) -> AppState {
     AppState {
         manager: Arc::new(ConversationManager::default()),
+        working_directory,
+    write_enabled: Arc::new(AtomicBool::new(true)),
     }
 }
 
@@ -35,6 +39,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/api/conversations/:id", axum::routing::delete(delete_conversation))
         .route("/api/compact/:task_id", post(compact_task))
         .route("/api/diff", get(get_git_diff))
+    .route("/api/write_enabled", get(get_write_enabled))
+    .route("/api/write_enabled", post(set_write_enabled))
         .nest_service("/", ServeDir::new(public_dir))
         .layer(cors)
 }

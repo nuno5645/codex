@@ -14,6 +14,7 @@ use axum::response::{IntoResponse, Sse};
 use axum::Json;
 use tokio_stream::{wrappers::BroadcastStream, StreamExt as _};
 use uuid::Uuid;
+use tracing::{debug, error, info, warn};
 
 use codex_core::{
     NewConversation,
@@ -26,7 +27,7 @@ pub async fn start_task(
     State(state): State<AppState>,
     Json(query): Json<StartQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let StartQuery { prompt, full_auto, cwd, images, conversation_id } = query;
+    let StartQuery { prompt, full_auto: _, cwd, images, conversation_id } = query;
 
     let sandbox_exe = detect_linux_sandbox_exe();
 
@@ -35,23 +36,25 @@ pub async fn start_task(
         model: None,
         config_profile: None,
         approval_policy: Some(codex_core::protocol::AskForApproval::Never),
-        sandbox_mode: if full_auto {
-            Some(SandboxMode::WorkspaceWrite)
-        } else {
-            None
-        },
-        cwd: cwd.map(std::path::PathBuf::from),
+        sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+        cwd: cwd.map(std::path::PathBuf::from).or(Some(state.working_directory.clone())),
         model_provider: None,
         codex_linux_sandbox_exe: sandbox_exe, // was None
         base_instructions: None,
-        include_plan_tool: None,
-        include_apply_patch_tool: None,
+        include_plan_tool: Some(true),
+        include_apply_patch_tool: Some(true),
         disable_response_storage: Some(false),
         show_raw_agent_reasoning: None,
     };
 
+    debug!("Creating config with overrides: approval_policy={:?}, sandbox_mode={:?}, include_apply_patch_tool={:?}, include_plan_tool={:?}", 
+           overrides.approval_policy, overrides.sandbox_mode, overrides.include_apply_patch_tool, overrides.include_plan_tool);
+    
     let config = Config::load_with_cli_overrides(Vec::new(), overrides)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+        .map_err(|e| {
+            error!("Failed to load config: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+        })?;
 
     // Either create a new conversation or look up an existing one
     let (conversation_uuid, conversation, maybe_session_configured) = if let Some(cid_str) = conversation_id {
@@ -134,10 +137,14 @@ pub async fn start_task(
     }
 
     // Kick off the task
+    info!("Submitting user input with {} items to conversation {}", items.len(), conversation_uuid);
     let _ = conversation
         .submit(Op::UserInput { items })
         .await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        .map_err(|e| {
+            error!("Failed to submit user input: {}", e);
+            (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}"))
+        })?;
 
     Ok(Json(StartResponse { task_id, conversation_id: conversation_uuid.to_string() }))
 }
@@ -167,6 +174,25 @@ pub async fn stream_events(Path(task_id): Path<String>) -> Result<impl IntoRespo
         .map(|evt| {
             match evt {
                 Ok(event) => {
+                    // Log important events for debugging
+                    match &event.msg {
+                        EventMsg::ExecCommandBegin(ev) => {
+                            debug!("Exec command begin: call_id={}, command={:?}, cwd={:?}", 
+                                   ev.call_id, ev.command, ev.cwd);
+                        }
+                        EventMsg::ExecCommandEnd(ev) => {
+                            if ev.exit_code != 0 {
+                                warn!("Command failed with exit code {}: {}", ev.exit_code, ev.stderr);
+                            } else {
+                                debug!("Command succeeded: call_id={}, duration={:?}", ev.call_id, ev.duration);
+                            }
+                        }
+                        EventMsg::PatchApplyEnd(ev) => {
+                            info!("Patch apply ended: call_id={}, success={}, stdout={}, stderr={}", 
+                                  ev.call_id, ev.success, ev.stdout, ev.stderr);
+                        }
+                        _ => {}
+                    }
                     let json = serde_json::to_string(&event).unwrap_or_else(|_| "{}".to_string());
                     Ok(SseEvent::default().data(json))
                 }
@@ -208,13 +234,18 @@ pub async fn delete_conversation(Path(id): Path<String>) -> Result<impl IntoResp
     }
 }
 
-pub async fn browse_directory(Query(query): Query<BrowseQuery>) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let current_path = query.path.unwrap_or_else(|| std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .to_string_lossy()
-        .to_string());
+pub async fn browse_directory(
+    State(state): State<AppState>,
+    Query(query): Query<BrowseQuery>
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let current_path = query.path.unwrap_or_else(|| state.working_directory.to_string_lossy().to_string());
     
     let path_buf = PathBuf::from(&current_path);
+    
+    // Ensure the path is within the working directory
+    if !path_buf.starts_with(&state.working_directory) {
+        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
+    }
     
     if !path_buf.exists() {
         return Err((StatusCode::NOT_FOUND, "Path does not exist".to_string()));
@@ -271,11 +302,20 @@ pub async fn browse_directory(Query(query): Query<BrowseQuery>) -> Result<impl I
     }))
 }
 
-pub async fn search_files(Query(query): Query<SearchFilesQuery>) -> Result<impl IntoResponse, (StatusCode, String)> {
+pub async fn search_files(
+    State(state): State<AppState>,
+    Query(query): Query<SearchFilesQuery>
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     let cwd = query
         .cwd
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).to_string_lossy().to_string());
+        .unwrap_or_else(|| state.working_directory.to_string_lossy().to_string());
     let cwd_path = PathBuf::from(&cwd);
+    
+    // Ensure the path is within the working directory
+    if !cwd_path.starts_with(&state.working_directory) {
+        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
+    }
+    
     if !cwd_path.exists() || !cwd_path.is_dir() {
         return Err((StatusCode::BAD_REQUEST, "cwd must be an existing directory".to_string()));
     }
@@ -342,11 +382,18 @@ pub async fn search_files(Query(query): Query<SearchFilesQuery>) -> Result<impl 
     }))
 }
 
-pub async fn get_git_diff(Query(query): Query<DiffQuery>) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let cwd = query.cwd.unwrap_or_else(|| std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .to_string_lossy()
-        .to_string());
+pub async fn get_git_diff(
+    State(state): State<AppState>,
+    Query(query): Query<DiffQuery>
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let cwd = query.cwd.unwrap_or_else(|| state.working_directory.to_string_lossy().to_string());
+    
+    let cwd_path = PathBuf::from(&cwd);
+    
+    // Ensure the path is within the working directory
+    if !cwd_path.starts_with(&state.working_directory) {
+        return Err((StatusCode::FORBIDDEN, "Path is outside working directory".to_string()));
+    }
 
     // Check if inside a git repo
     let inside_repo = match tokio::process::Command::new("git")
@@ -448,4 +495,19 @@ pub async fn compact_task(Path(task_id): Path<String>) -> Result<impl IntoRespon
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
 
     Ok(Json(OkResponse { ok: true }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct SetWriteQuery {
+    pub enabled: bool,
+}
+
+pub async fn get_write_enabled(State(state): State<AppState>) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let val = state.write_enabled.load(std::sync::atomic::Ordering::SeqCst);
+    Ok(Json(OkResponse { ok: val }))
+}
+
+pub async fn set_write_enabled(State(state): State<AppState>, Json(body): Json<SetWriteQuery>) -> Result<impl IntoResponse, (StatusCode, String)> {
+    state.write_enabled.store(body.enabled, std::sync::atomic::Ordering::SeqCst);
+    Ok(Json(OkResponse { ok: body.enabled }))
 }

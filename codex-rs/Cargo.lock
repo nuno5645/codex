@@ -1045,6 +1045,8 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "axum",
+ "clap",
+ "codex-arg0",
  "codex-core",
  "codex-protocol",
  "futures",

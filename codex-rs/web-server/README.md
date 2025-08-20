@@ -10,9 +10,12 @@ How to run (macOS):
    - Restart your shell or source $HOME/.cargo/env
 2. Build and run
    - cd codex-rs
-   - cargo run -p codex-web-server
+   - cargo run -p codex-web-server [-- --working-directory /path/to/project]
 3. Open the UI
    - Visit http://localhost:4321
+
+Command Line Options:
+- `--working-directory <DIR>` or `-w <DIR>` - Specify the working directory to serve (defaults to current directory)
 
 Endpoints:
 - POST `/api/start` — body: `{ prompt, full_auto?, cwd?, images? }` → `{ task_id }`
@@ -25,14 +28,15 @@ Notes:
 - The server binds to `127.0.0.1:4321` for local development and enables permissive CORS.
 - Static UI is served from `/` (files under `src/public/`).
 - The directory browser hides dotfiles and returns directories first, then files.
+- All file operations are restricted to the specified working directory for security.
 
-Slash Commands (UI):
-- `/new` — clear chat and start fresh
-- `/init` — sends an initialization prompt to create `AGENTS.md`
-- `/compact` — compacts current conversation on the server
-- `/diff` — shows `git diff` (plus untracked files) for selected working dir
-- `/mention` — inserts `@` at the cursor
-- `/status` — renders current model, tokens, and cwd
-- `/logout`, `/quit` — informational in the web UI
+Web CLI UI (served from `/`):
+- Terminal-like streaming of agent events (SSE)
+- Start runs with Enter; Shift+Enter inserts newline
+- Full-auto toggle (approval-policy never)
+- Optional `cwd` input and image attachments
+- Live tokens/model/session indicators
+- Conversation list sidebar; click to load and continue
+- Cancel and Compact actions for the current task
 
-The UI is static assets under src/public/index.html.
+Static assets live under `src/public/index.html`.

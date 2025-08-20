@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::warn;
 
 // Auto-detect the codex-linux-sandbox helper on Linux so sandboxed commands work.
 #[cfg(target_os = "linux")]

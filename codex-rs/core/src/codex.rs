@@ -894,6 +894,63 @@ impl Session {
     }
 }
 
+/// Normalize common mistakes in apply_patch envelopes so that the tool can proceed.
+/// - Fixes '**_ Begin Patch' or '* Begin Patch' to '*** Begin Patch'
+/// - Fixes '**_ End Patch' or '* End Patch' to '*** End Patch'
+/// - Strips surrounding markdown code fences if the entire body is fenced
+/// - Normalizes CRLF to LF
+fn normalize_patch_envelope(patch: &str) -> String {
+    // Normalize newlines first
+    let mut s = patch.replace("\r\n", "\n");
+    let trimmed = s.trim();
+
+    // Strip a full-document code fence if present
+    // ```\n...\n```
+    if trimmed.starts_with("```") {
+        // remove first line and last fence if present
+        let mut lines = trimmed.lines();
+        let first = lines.next().unwrap_or("");
+        if first.starts_with("```") {
+            let rest: String = lines.collect::<Vec<_>>().join("\n");
+            let rest_trim = rest.trim_end();
+            if rest_trim.ends_with("```") {
+                let without_end = rest_trim.strip_suffix("```").unwrap_or(rest_trim).trim_end();
+                s = without_end.to_string();
+            } else {
+                s = rest;
+            }
+        }
+    }
+
+    // Fix common header/footer typos on the first/last lines
+    let mut lines: Vec<String> = s.lines().map(|l| l.to_string()).collect();
+    if let Some(first) = lines.first_mut() {
+        if first.starts_with("**_ Begin Patch") || first.starts_with("* Begin Patch") {
+            *first = "*** Begin Patch".to_string();
+        }
+    }
+    if let Some(last) = lines.last_mut() {
+        let lt = last.trim_end();
+        if lt == "**_ End Patch" || lt == "* End Patch" {
+            *last = "*** End Patch".to_string();
+        }
+    }
+
+    // If the envelope is missing entirely but it's clearly a patch, we can attempt to add it.
+    // Be conservative: add envelope only if it contains at least one '*** Update File:' or '*** Add File:' line.
+    let has_begin = lines.get(0).map(|l| l.trim_start().starts_with("*** Begin Patch")).unwrap_or(false);
+    let has_end = lines.iter().any(|l| l.trim_start() == "*** End Patch");
+    let contains_ops = lines.iter().any(|l| l.trim_start().starts_with("*** Update File:") || l.trim_start().starts_with("*** Add File:") || l.trim_start().starts_with("*** Delete File:"));
+    if !has_begin && contains_ops {
+        lines.insert(0, "*** Begin Patch".to_string());
+    }
+    if !has_end && contains_ops {
+        lines.push("*** End Patch".to_string());
+    }
+
+    lines.join("\n")
+}
+
 impl Drop for Session {
     fn drop(&mut self) {
         self.interrupt_task();
@@ -1950,8 +2007,10 @@ async fn handle_function_call(
                     };
                 }
             };
+            // Normalize common patch envelope mistakes to avoid user-visible failures
+            let normalized = normalize_patch_envelope(&args.input);
             let exec_params = ExecParams {
-                command: vec!["apply_patch".to_string(), args.input.clone()],
+                command: vec!["apply_patch".to_string(), normalized],
                 cwd: turn_context.cwd.clone(),
                 timeout_ms: None,
                 env: HashMap::new(),
