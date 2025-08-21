@@ -23,12 +23,13 @@ use codex_core::{
 };
 use codex_protocol::config_types::SandboxMode;
 use codex_common::CliConfigOverrides;
+use codex_core::protocol::{AskForApproval, ReviewDecision};
 
 pub async fn start_task(
     State(state): State<AppState>,
     Json(query): Json<StartQuery>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
-    let StartQuery { prompt, full_auto: _, cwd, images, conversation_id, model, config_profile, overrides } = query;
+    let StartQuery { prompt, full_auto, cwd, images, conversation_id, model, config_profile, overrides, approval_policy, sandbox_mode, dangerously_bypass } = query;
 
     let sandbox_exe = detect_linux_sandbox_exe();
 
@@ -43,12 +44,45 @@ pub async fn start_task(
         Vec::new()
     };
 
+    // Resolve approval policy based on flags/explicit value
+    let resolved_approval: Option<AskForApproval> = if dangerously_bypass.unwrap_or(false) {
+        Some(AskForApproval::Never)
+    } else if let Some(ap) = approval_policy.as_deref() {
+        match ap {
+            "untrusted" => Some(AskForApproval::UnlessTrusted),
+            "on-failure" => Some(AskForApproval::OnFailure),
+            "on-request" => Some(AskForApproval::OnRequest),
+            "never" => Some(AskForApproval::Never),
+            other => return Err((StatusCode::BAD_REQUEST, format!("invalid approval_policy: {other}"))),
+        }
+    } else if full_auto {
+        // In web UI, full_auto means no approvals (consistent with previous UI behavior)
+        Some(AskForApproval::Never)
+    } else {
+        None
+    };
+
+    // Resolve sandbox mode
+    let resolved_sandbox: Option<SandboxMode> = if dangerously_bypass.unwrap_or(false) {
+        Some(SandboxMode::DangerFullAccess)
+    } else if let Some(sm) = sandbox_mode.as_deref() {
+        match sm {
+            "read-only" => Some(SandboxMode::ReadOnly),
+            "workspace-write" => Some(SandboxMode::WorkspaceWrite),
+            "danger-full-access" => Some(SandboxMode::DangerFullAccess),
+            other => return Err((StatusCode::BAD_REQUEST, format!("invalid sandbox_mode: {other}"))),
+        }
+    } else {
+        // default for web server
+        Some(SandboxMode::WorkspaceWrite)
+    };
+
     // Build ConfigOverrides similar to exec run_main, but allow model/profile overrides from request
     let overrides = ConfigOverrides {
         model,
         config_profile,
-        approval_policy: Some(codex_core::protocol::AskForApproval::Never),
-        sandbox_mode: Some(SandboxMode::WorkspaceWrite),
+        approval_policy: resolved_approval,
+        sandbox_mode: resolved_sandbox,
         cwd: cwd.map(std::path::PathBuf::from).or(Some(state.working_directory.clone())),
         model_provider: None,
         codex_linux_sandbox_exe: sandbox_exe, // was None
@@ -220,6 +254,9 @@ pub async fn stream_events(Path(task_id): Path<String>) -> Result<impl IntoRespo
     );
     Ok((headers, sse))
 }
+
+// Note: duplicate visual messages are primarily filtered client-side in
+// `src/public/app.js` to avoid suppressing semantically meaningful events here.
 
 pub async fn list_conversations() -> Result<impl IntoResponse, (StatusCode, String)> {
     match get_conversation_list() {
@@ -533,6 +570,51 @@ pub async fn compact_task(Path(task_id): Path<String>) -> Result<impl IntoRespon
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
 
+    Ok(Json(OkResponse { ok: true }))
+}
+
+#[derive(serde::Deserialize)]
+pub struct ApprovalRequest {
+    pub task_id: String,
+    pub event_id: String,
+    pub decision: String, // "approved" | "approved_for_session" | "denied" | "abort"
+}
+
+fn parse_decision(s: &str) -> Option<ReviewDecision> {
+    match s {
+        "approved" => Some(ReviewDecision::Approved),
+        "approved_for_session" => Some(ReviewDecision::ApprovedForSession),
+        "denied" => Some(ReviewDecision::Denied),
+        "abort" => Some(ReviewDecision::Abort),
+        _ => None,
+    }
+}
+
+pub async fn approve_exec(Json(req): Json<ApprovalRequest>) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let decision = parse_decision(&req.decision).ok_or((StatusCode::BAD_REQUEST, "invalid decision".to_string()))?;
+    let ctx = REGISTRY
+        .get(&req.task_id)
+        .await
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "unknown task_id".to_string()))?;
+    ctx
+        .conversation
+        .submit(Op::ExecApproval { id: req.event_id, decision })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+    Ok(Json(OkResponse { ok: true }))
+}
+
+pub async fn approve_patch(Json(req): Json<ApprovalRequest>) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let decision = parse_decision(&req.decision).ok_or((StatusCode::BAD_REQUEST, "invalid decision".to_string()))?;
+    let ctx = REGISTRY
+        .get(&req.task_id)
+        .await
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "unknown task_id".to_string()))?;
+    ctx
+        .conversation
+        .submit(Op::PatchApproval { id: req.event_id, decision })
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
     Ok(Json(OkResponse { ok: true }))
 }
 

@@ -19,10 +19,20 @@ Command Line Options:
 
 Endpoints:
 - POST `/api/start` — body: `{ prompt, full_auto?, cwd?, images? }` → `{ task_id }`
+  - Optional fields for model/config parity:
+    - `model?: string` — overrides the model selection (e.g. "gpt-5")
+    - `config_profile?: string` — selects a named profile from config.toml
+    - `overrides?: string[]` — generic config overrides like CLI `-c`, e.g. `["tui.hide_agent_reasoning=true", "model_provider=oss"]`
+  - Optional approval/sandbox control:
+    - `approval_policy?: "untrusted" | "on-failure" | "on-request" | "never"`
+    - `sandbox_mode?: "read-only" | "workspace-write" | "danger-full-access"`
+    - `dangerously_bypass?: boolean` — forces `approval_policy=never` and `sandbox_mode=danger-full-access`
 - GET `/api/events/:task_id` — Server-Sent Events (1 JSON event per line)
 - GET `/api/browse?path=/optional/abs/or/relative/path` — JSON directory listing
 - POST `/api/compact/:task_id` — request conversation compaction (like CLI `/compact`)
 - GET `/api/diff?cwd=/path` — return `{ is_git_repo, diff }` for Git diff (untracked included)
+- POST `/api/approve/exec` — body: `{ task_id, event_id, decision }` where decision is `approved | approved_for_session | denied | abort`
+- POST `/api/approve/patch` — body: `{ task_id, event_id, decision }` with same decision options
 
 Notes:
 - The server binds to `127.0.0.1:4321` for local development and enables permissive CORS.
@@ -34,6 +44,8 @@ Web CLI UI (served from `/`):
 - Terminal-like streaming of agent events (SSE)
 - Start runs with Enter; Shift+Enter inserts newline
 - Full-auto toggle (approval-policy never)
+- Approval controls (approval policy dropdown) and sandbox mode selection
+- Optional model/profile/overrides inputs forwarded to backend config
 - Optional `cwd` input and image attachments
 - Live tokens/model/session indicators
 - Conversation list sidebar; click to load and continue

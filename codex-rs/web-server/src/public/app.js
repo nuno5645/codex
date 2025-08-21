@@ -7,18 +7,22 @@ const compactBtn = document.getElementById('compact');
 const fullAutoEl = document.getElementById('full-auto');
 const cwdEl = document.getElementById('cwd');
 const imagesEl = document.getElementById('images');
+const imagesBtn = document.getElementById('images-btn');
+const imagesChipsEl = document.getElementById('images-chips');
 const attachmentsEl = document.getElementById('attachments');
 const showReasoningEl = document.getElementById('show-reasoning');
 const modelEl = document.getElementById('model');
 const profileEl = document.getElementById('profile');
 const overridesEl = document.getElementById('overrides');
+const approvalPolicyEl = document.getElementById('approval-policy');
+const sandboxModeEl = document.getElementById('sandbox-mode');
+const dangerBypassEl = document.getElementById('danger-bypass');
 const statusTokens = document.getElementById('status-tokens');
 const statusModel = document.getElementById('status-model');
 const statusSession = document.getElementById('status-session');
 const convListEl = document.getElementById('conv-list');
 const refreshConvBtn = document.getElementById('refresh-conv');
 const searchConvEl = document.getElementById('search-conv');
-const writeEnableEl = document.getElementById('write-enable');
 // File picker elements
 const fileListEl = document.getElementById('file-list');
 const fileSearchEl = document.getElementById('file-search');
@@ -31,6 +35,10 @@ const inputBoxEl = document.querySelector('.input-box');
 const chatsModal = document.getElementById('chats-modal');
 const openChatsBtn = document.getElementById('open-chats');
 const closeChatsBtn = document.getElementById('close-chats');
+// Settings modal elements
+const settingsModal = document.getElementById('settings-modal');
+const openSettingsBtn = document.getElementById('open-settings');
+const closeSettingsBtn = document.getElementById('close-settings');
 
 let currentTaskId = null;
 let currentConversationId = null;
@@ -38,8 +46,48 @@ let es = null;
 let activeExecs = 0;
 let activePatches = 0;
 let pastedImages = [];
+let currentObjectUrls = [];
 let currentBrowsePath = '';
 let parentBrowsePath = null;
+let turnBusy = false; // true while agent is responding
+let awaitingApproval = false; // true while waiting for user approval
+
+function setInteractionLocked(locked) {
+  // Disable/enable user inputs while it's not the user's turn
+  try { promptEl.disabled = locked; } catch {}
+  try { runBtn.disabled = locked; } catch {}
+  try { imagesBtn.disabled = locked; } catch {}
+  try { imagesEl.disabled = locked; } catch {}
+}
+
+function updateTurnPill() {
+  const pill = document.getElementById('status-turn');
+  if (!pill) return;
+  // Reset variant classes, then apply based on state
+  try { pill.classList.remove('pill--ready', 'pill--busy', 'pill--approval'); } catch {}
+  if (awaitingApproval) {
+    try { pill.classList.add('pill--approval'); } catch {}
+    pill.innerHTML = '';
+    const spin = document.createElement('span');
+    spin.className = 'spinner';
+    const txt = document.createElement('span');
+    txt.textContent = 'turn: awaiting approval…';
+    pill.appendChild(spin);
+    pill.appendChild(txt);
+  } else if (turnBusy) {
+    try { pill.classList.add('pill--busy'); } catch {}
+    pill.innerHTML = '';
+    const spin = document.createElement('span');
+    spin.className = 'spinner';
+    const txt = document.createElement('span');
+    txt.textContent = 'turn: agent working…';
+    pill.appendChild(spin);
+    pill.appendChild(txt);
+  } else {
+    try { pill.classList.add('pill--ready'); } catch {}
+    pill.textContent = 'turn: ready';
+  }
+}
 
 function line(text, cls = '') {
   const div = document.createElement('div');
@@ -104,14 +152,59 @@ function decodeChunk(chunk) {
   return '[binary]';
 }
 
+function revokeObjectUrls() {
+  try { for (const u of currentObjectUrls) URL.revokeObjectURL(u); } catch {}
+  currentObjectUrls = [];
+}
+
+function truncateName(name, max = 28) {
+  if (!name) return '';
+  if (name.length <= max) return name;
+  const head = Math.ceil(max * 0.65);
+  const tail = max - head - 1;
+  return name.slice(0, head) + '…' + name.slice(-tail);
+}
+
+function renderImageChips() {
+  if (!imagesChipsEl) return;
+  imagesChipsEl.innerHTML = '';
+  const files = Array.from(imagesEl?.files || []);
+  files.forEach((file, idx) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip';
+    chip.title = file.name;
+    chip.textContent = truncateName(file.name);
+    const x = document.createElement('button');
+    x.className = 'xbtn';
+    x.type = 'button';
+    x.setAttribute('aria-label', `Remove ${file.name}`);
+    x.textContent = '×';
+    x.addEventListener('click', () => {
+      try {
+        const dt = new DataTransfer();
+        Array.from(imagesEl.files).forEach((f, i) => { if (i !== idx) dt.items.add(f); });
+        imagesEl.files = dt.files;
+        imagesEl.dispatchEvent(new Event('change'));
+      } catch {}
+    });
+    chip.appendChild(x);
+    imagesChipsEl.appendChild(chip);
+  });
+}
+
 function renderAttachments() {
   if (!attachmentsEl) return;
+  revokeObjectUrls();
   attachmentsEl.innerHTML = '';
-  if (!pastedImages || pastedImages.length === 0) {
+  const files = Array.from(imagesEl?.files || []);
+  const hasPicked = files.length > 0;
+  const hasPasted = pastedImages && pastedImages.length > 0;
+  if (!hasPicked && !hasPasted) {
     attachmentsEl.hidden = true;
     return;
   }
   attachmentsEl.hidden = false;
+  // Pasted images
   pastedImages.forEach((url, index) => {
     const wrap = document.createElement('div');
     wrap.className = 'attachment';
@@ -125,6 +218,31 @@ function renderAttachments() {
     btn.addEventListener('click', () => {
       pastedImages.splice(index, 1);
       renderAttachments();
+    });
+    wrap.appendChild(img);
+    wrap.appendChild(btn);
+    attachmentsEl.appendChild(wrap);
+  });
+  // Selected images
+  files.forEach((file, idx) => {
+    const url = URL.createObjectURL(file);
+    currentObjectUrls.push(url);
+    const wrap = document.createElement('div');
+    wrap.className = 'attachment';
+    const img = document.createElement('img');
+    img.src = url;
+    img.alt = file.name || 'selected image';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.title = 'Remove image';
+    btn.textContent = '×';
+    btn.addEventListener('click', () => {
+      try {
+        const dt = new DataTransfer();
+        Array.from(imagesEl.files).forEach((f, i) => { if (i !== idx) dt.items.add(f); });
+        imagesEl.files = dt.files;
+        imagesEl.dispatchEvent(new Event('change'));
+      } catch {}
     });
     wrap.appendChild(img);
     wrap.appendChild(btn);
@@ -232,6 +350,10 @@ function resetStream() {
   compactBtn.disabled = true;
   // reset UI execution status
   activeExecs = 0;
+  turnBusy = false;
+  awaitingApproval = false;
+  updateTurnPill();
+  setInteractionLocked(false);
   updateExecStatus();
 }
 
@@ -339,6 +461,11 @@ async function searchFilesInPath(query) {
 
 async function start(prompt) {
   resetStream();
+  turnBusy = true;
+  awaitingApproval = false;
+  updateTurnPill();
+  setInteractionLocked(true);
+  updateExecStatus();
   const pickedImages = await Promise.all(Array.from(imagesEl.files || []).map(file => new Promise((res, rej) => {
     const reader = new FileReader();
     reader.onload = () => res(reader.result);
@@ -370,6 +497,12 @@ async function start(prompt) {
     }
   };
 
+  const ap = approvalPolicyEl && approvalPolicyEl.value.trim();
+  if (ap) body.approval_policy = ap;
+  const sm = sandboxModeEl && sandboxModeEl.value.trim();
+  if (sm) body.sandbox_mode = sm;
+  if (dangerBypassEl && dangerBypassEl.checked) body.dangerously_bypass = true;
+
   richLine([{tag:'tag', text:'user     '}, {text: prompt || '(images only)'}], 'user');
 
   const res = await fetch('/api/start', {
@@ -380,6 +513,11 @@ async function start(prompt) {
   if (!res.ok) {
     const t = await res.text();
     line('! start failed: ' + t, 'error');
+    turnBusy = false;
+    awaitingApproval = false;
+    updateTurnPill();
+    setInteractionLocked(false);
+    updateExecStatus();
     return;
   }
   const { task_id, conversation_id } = await res.json();
@@ -395,7 +533,20 @@ async function start(prompt) {
   pastedImages = [];
   renderAttachments();
   if (imagesEl) imagesEl.value = '';
+  renderImageChips();
   // Keep model/profile/overrides as-is for next run
+}
+
+async function sendApproval(kind, eventId, decision) {
+  if (!currentTaskId) return;
+  const endpoint = kind === 'exec' ? '/api/approve/exec' : '/api/approve/patch';
+  try {
+    await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: currentTaskId, event_id: eventId, decision })
+    });
+  } catch {}
 }
 
 function updateExecStatus() {
@@ -403,11 +554,12 @@ function updateExecStatus() {
   if (!pill) return;
   if (activeExecs > 0) {
     pill.textContent = `exec: running (${activeExecs})`;
-    runBtn.classList.add('loading');
   } else {
     pill.textContent = 'exec: idle';
-    runBtn.classList.remove('loading');
   }
+  // Show loading on Run while either a command runs or it's not user's turn
+  if (activeExecs > 0 || turnBusy || awaitingApproval) runBtn.classList.add('loading');
+  else runBtn.classList.remove('loading');
 }
 
 function updatePatchStatus() {
@@ -424,6 +576,10 @@ function stream(taskId) {
   if (es) { es.close(); es = null; }
   es = new EventSource(`/api/events/${encodeURIComponent(taskId)}`);
   const agentMsgLines = new Map(); // event id -> div for deltas
+  // Track last rendered texts to collapse obvious duplicates
+  let lastAgentFinal = '';
+  const lastAgentDeltaById = new Map(); // id -> last delta text
+  let lastBackground = '';
   const cmdOutputLines = new Map(); // call_id -> output pre element
   const reasoningLines = new Map(); // event id -> div for reasoning content (legacy)
   const reasoningBlocks = new Map(); // event id -> {block, headerEl, contentEl}
@@ -440,6 +596,57 @@ function stream(taskId) {
       const msg = event.msg || {};
       const ty = msg.type;
       switch (ty) {
+        case 'task_started': {
+          richLine([{tag:'tag', text:'status   '}, {text: 'task started'}], 'dim');
+          turnBusy = true;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
+          break;
+        }
+        case 'exec_approval_request': {
+          awaitingApproval = true;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
+          line('You need to approve…', 'dim');
+          const title = `Approve command?`;
+          const block = document.createElement('div');
+          block.className = 'approval-block';
+          const h = document.createElement('div'); h.className = 'approval-title'; h.textContent = title; block.appendChild(h);
+          const cmd = document.createElement('div'); cmd.className = 'exec-cmd'; cmd.textContent = `$ ${ (msg.command||[]).join(' ') }`; block.appendChild(cmd);
+          const cwd = document.createElement('div'); cwd.className = 'exec-cwd'; cwd.textContent = `cwd: ${msg.cwd || ''}`; block.appendChild(cwd);
+          const actions = document.createElement('div'); actions.className = 'approval-actions';
+          const bApprove = document.createElement('button'); bApprove.className='btn approve'; bApprove.textContent='Approve'; bApprove.onclick=()=>sendApproval('exec', id, 'approved');
+          const bApproveSess = document.createElement('button'); bApproveSess.className='btn approve'; bApproveSess.textContent='Approve (session)'; bApproveSess.onclick=()=>sendApproval('exec', id, 'approved_for_session');
+          const bDeny = document.createElement('button'); bDeny.className='btn deny'; bDeny.textContent='Deny'; bDeny.onclick=()=>sendApproval('exec', id, 'denied');
+          const bAbort = document.createElement('button'); bAbort.className='btn secondary'; bAbort.textContent='Abort turn'; bAbort.onclick=()=>sendApproval('exec', id, 'abort');
+          actions.appendChild(bApprove); actions.appendChild(bApproveSess); actions.appendChild(bDeny); actions.appendChild(bAbort);
+          block.appendChild(actions);
+          term.appendChild(block); term.scrollTop = term.scrollHeight;
+          break;
+        }
+        case 'apply_patch_approval_request': {
+          awaitingApproval = true;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
+          line('You need to approve…', 'dim');
+          const title = `Approve patch?`;
+          const block = document.createElement('div');
+          block.className = 'approval-block';
+          const h = document.createElement('div'); h.className = 'approval-title'; h.textContent = title; block.appendChild(h);
+          const reason = document.createElement('div'); reason.className='dim'; reason.textContent = msg.reason ? `reason: ${msg.reason}` : ''; block.appendChild(reason);
+          const actions = document.createElement('div'); actions.className = 'approval-actions';
+          const bApprove = document.createElement('button'); bApprove.className='btn approve'; bApprove.textContent='Approve'; bApprove.onclick=()=>sendApproval('patch', id, 'approved');
+          const bApproveSess = document.createElement('button'); bApproveSess.className='btn approve'; bApproveSess.textContent='Approve (session)'; bApproveSess.onclick=()=>sendApproval('patch', id, 'approved_for_session');
+          const bDeny = document.createElement('button'); bDeny.className='btn deny'; bDeny.textContent='Deny'; bDeny.onclick=()=>sendApproval('patch', id, 'denied');
+          const bAbort = document.createElement('button'); bAbort.className='btn secondary'; bAbort.textContent='Abort turn'; bAbort.onclick=()=>sendApproval('patch', id, 'abort');
+          actions.appendChild(bApprove); actions.appendChild(bApproveSess); actions.appendChild(bDeny); actions.appendChild(bAbort);
+          block.appendChild(actions);
+          term.appendChild(block); term.scrollTop = term.scrollHeight;
+          break;
+        }
         case 'session_configured': {
           const sid = (msg.session_id || '').toString().slice(0, 8);
           statusModel.textContent = 'model: ' + (msg.model || '?');
@@ -447,13 +654,12 @@ function stream(taskId) {
           richLine([{tag:'tag', text:'session  '}, {text: `configured (model=${msg.model || '?'})` }], 'dim');
           break;
         }
-        case 'task_started': {
-          richLine([{tag:'tag', text:'status   '}, {text: 'task started'}], 'dim');
-          break;
-        }
         case 'agent_message': {
+          const text = (msg.message || '').trim();
+          if (text && text === lastAgentFinal) break; // drop exact duplicate
+          lastAgentFinal = text;
           const div = richLine([{tag:'tag', text:'agent    '}], 'agent');
-          const nodes = renderMarkdownToNodes(msg.message || '');
+          const nodes = renderMarkdownToNodes(text);
           div.appendChild(nodes);
           agentMsgLines.set(id, div);
           break;
@@ -464,7 +670,11 @@ function stream(taskId) {
             div = richLine([{tag:'tag', text:'agent    '}], 'agent');
             agentMsgLines.set(id, div);
           }
-          div.appendChild(renderMarkdownToNodes(msg.delta || ''));
+          const delta = (msg.delta || '').trim();
+          const last = lastAgentDeltaById.get(id) || '';
+          if (delta && delta === last) break; // drop duplicate delta for this id
+          lastAgentDeltaById.set(id, delta);
+          div.appendChild(renderMarkdownToNodes(delta));
           term.scrollTop = term.scrollHeight;
           break;
         }
@@ -547,6 +757,10 @@ function stream(taskId) {
           break;
         }
         case 'exec_command_begin': {
+          awaitingApproval = false;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
           const cwd = msg.cwd ? String(msg.cwd) : '';
           const cmd = (msg.command || []).join(' ');
           const block = document.createElement('div');
@@ -647,11 +861,12 @@ function stream(taskId) {
           }
           break;
         }
-        case 'apply_patch_approval_request': {
-          line('apply patch requested (auto in web full-auto)', 'dim');
-          break;
-        }
+        
         case 'patch_apply_begin': {
+          awaitingApproval = false;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
           line('applying patch…', 'dim');
           activePatches += 1;
           updatePatchStatus();
@@ -665,7 +880,10 @@ function stream(taskId) {
           break;
         }
         case 'background_event': {
-          line(msg.message || '', 'dim');
+          const txt = (msg.message || '').trim();
+          if (txt && txt === lastBackground) break;
+          lastBackground = txt;
+          line(txt, 'dim');
           break;
         }
         case 'turn_diff': {
@@ -767,6 +985,10 @@ function stream(taskId) {
           compactBtn.disabled = true;
           // ensure status cleared when task completes
           activeExecs = 0;
+          turnBusy = false;
+          awaitingApproval = false;
+          updateTurnPill();
+          setInteractionLocked(false);
           updateExecStatus();
           break;
         }
@@ -775,6 +997,10 @@ function stream(taskId) {
           currentTaskId = null;
           cancelBtn.disabled = true;
           compactBtn.disabled = true;
+          awaitingApproval = false;
+          turnBusy = false;
+          updateTurnPill();
+          setInteractionLocked(false);
           break;
         }
         case 'shutdown_complete': {
@@ -783,6 +1009,10 @@ function stream(taskId) {
           currentTaskId = null;
           cancelBtn.disabled = true;
           compactBtn.disabled = true;
+          awaitingApproval = false;
+          turnBusy = false;
+          updateTurnPill();
+          setInteractionLocked(false);
           break;
         }
         case 'token_count_update': {
@@ -795,12 +1025,22 @@ function stream(taskId) {
           richLine([{tag:'tag', text:'status   '}, {text: 'turn started'}], 'dim');
           // New turn: clear seen diffs
           shownDiffs.clear();
+          turnBusy = true;
+          awaitingApproval = false;
+          updateTurnPill();
+          setInteractionLocked(true);
+          updateExecStatus();
           break;
         }
         case 'turn_complete': {
           richLine([{tag:'tag', text:'status   '}, {text: 'turn complete'}], 'dim');
           // End of turn: clear seen diffs to prepare for next turn
           shownDiffs.clear();
+          awaitingApproval = false;
+          turnBusy = false;
+          updateTurnPill();
+          setInteractionLocked(false);
+          updateExecStatus();
           break;
         }
         default: {
@@ -814,6 +1054,11 @@ function stream(taskId) {
   };
   es.onerror = () => {
     line('! event stream error', 'error');
+    turnBusy = false;
+    awaitingApproval = false;
+    updateTurnPill();
+    setInteractionLocked(false);
+    updateExecStatus();
   };
 }
 
@@ -866,21 +1111,7 @@ showReasoningEl.addEventListener('change', () => {
   }
 });
 
-writeEnableEl.addEventListener('change', async () => {
-  try {
-    const res = await fetch('/api/write_enabled', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enabled: !!writeEnableEl.checked }),
-    });
-    if (!res.ok) {
-      writeEnableEl.checked = !writeEnableEl.checked;
-      return;
-    }
-  } catch (e) {
-    writeEnableEl.checked = !writeEnableEl.checked;
-  }
-});
+// Write is always enabled now; toggle removed from UI.
 
 // File picker events
 if (refreshFilesBtn) refreshFilesBtn.addEventListener('click', () => browse(currentBrowsePath));
@@ -892,6 +1123,11 @@ if (fileSearchEl) fileSearchEl.addEventListener('input', (e) => { searchFilesInP
 if (openChatsBtn) openChatsBtn.addEventListener('click', () => { chatsModal?.setAttribute('open', ''); hydrateConversationsList(); });
 if (closeChatsBtn) closeChatsBtn.addEventListener('click', () => { chatsModal?.removeAttribute('open'); });
 if (chatsModal) chatsModal.addEventListener('click', (e) => { if (e.target === chatsModal) chatsModal.removeAttribute('open'); });
+
+// Settings modal events
+if (openSettingsBtn) openSettingsBtn.addEventListener('click', () => { settingsModal?.setAttribute('open',''); });
+if (closeSettingsBtn) closeSettingsBtn.addEventListener('click', () => { settingsModal?.removeAttribute('open'); });
+if (settingsModal) settingsModal.addEventListener('click', (e) => { if (e.target === settingsModal) settingsModal.removeAttribute('open'); });
 
 // Populate the sidebar with the initial working directory on load
 try { browse(null); } catch {}
@@ -1110,3 +1346,13 @@ document.addEventListener('drop', (e) => {
     e.preventDefault();
   }
 });
+
+// Image picker wiring
+if (imagesBtn) {
+  imagesBtn.addEventListener('click', () => imagesEl && imagesEl.click());
+}
+if (imagesEl) {
+  imagesEl.addEventListener('change', () => { renderImageChips(); renderAttachments(); });
+}
+// Initial chips render on load
+renderImageChips();

@@ -13,15 +13,13 @@
         <div class="sep">›</div>
         <div class="title">web cli</div>
         <div class="status">
+          <span id="status-turn" class="pill pill--ready" title="Turn status">turn: ready</span>
           <span id="status-model" class="pill" title="Model in use">model: ?</span>
           <span id="status-session" class="pill" title="Current session id">session: –</span>
           <span id="status-tokens" class="pill" title="Token usage">tokens: 0</span>
             <span id="status-exec" class="pill" title="Command status">exec: idle</span>
             <span id="status-patch" class="pill" title="Patch apply status">patch: idle</span>
-            <label class="pill" title="Enable writes" style="display:inline-flex;align-items:center;gap:8px;">
-              <input id="write-enable" type="checkbox" style="margin:0;" />
-              <span style="font-size:12px;color:var(--muted)">write</span>
-            </label>
+            <button id="open-settings" class="pill pill-btn" title="Open settings">⚙︎ Settings</button>
         </div>
       </header>
 
@@ -47,13 +45,12 @@
             <textarea id="prompt" placeholder="Type a prompt. Paste images or use the picker below. Shift+Enter for newline; Enter to run."></textarea>
             <div id="attachments" class="attachments" aria-label="Attached images" hidden></div>
             <div class="controls">
-              <label class="toggle"><input id="full-auto" type="checkbox" /> Full auto (no approvals)</label>
-              <label class="toggle"><input id="show-reasoning" type="checkbox" checked /> reasoning</label>
-              <label class="toggle">model: <input id="model" type="text" size="20" placeholder="inherit config" /></label>
-              <label class="toggle">profile: <input id="profile" type="text" size="16" placeholder="default" /></label>
-              <label class="toggle">overrides: <input id="overrides" type="text" size="32" placeholder="key=value, a.b=true" /></label>
-              <label class="toggle">cwd: <input id="cwd" type="text" size="36" placeholder="inherit server working dir" /></label>
-              <label class="toggle">images: <input id="images" type="file" accept="image/*" multiple /></label>
+              <div class="file-input">
+                <label class="toggle" for="images-btn">images:</label>
+                <button id="images-btn" class="btn secondary" type="button">Add images…</button>
+                <div id="images-chips" class="chips" aria-live="polite"></div>
+                <input id="images" type="file" accept="image/*" multiple hidden />
+              </div>
               <button id="run" class="btn">Run (Enter)</button>
               <button id="cancel" class="btn secondary" disabled>Cancel</button>
               <button id="compact" class="btn secondary" disabled>Compact</button>
@@ -75,6 +72,42 @@
           <button id="refresh-conv" class="btn" title="Refresh">↻</button>
         </div>
         <div id="conv-list" class="list" aria-label="Conversations"></div>
+      </div>
+    </div>
+
+    <!-- Settings modal -->
+    <div id="settings-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-content">
+        <div class="modal-header">
+          <div id="settings-title" class="modal-title">Run Settings</div>
+          <button id="close-settings" class="btn secondary">Close</button>
+        </div>
+        <div class="settings-grid">
+          <label class="toggle"><input id="full-auto" type="checkbox" /> Full auto (no approvals)</label>
+          <label class="toggle"><input id="show-reasoning" type="checkbox" checked /> reasoning</label>
+          <label class="toggle">model: <input id="model" type="text" size="20" placeholder="inherit config" /></label>
+          <label class="toggle">profile: <input id="profile" type="text" size="16" placeholder="default" /></label>
+          <label class="toggle">overrides: <input id="overrides" type="text" size="32" placeholder="key=value, a.b=true" /></label>
+          <label class="toggle">approval:
+            <select id="approval-policy">
+              <option value="">inherit</option>
+              <option value="untrusted">untrusted</option>
+              <option value="on-failure">on-failure</option>
+              <option value="on-request">on-request</option>
+              <option value="never">never</option>
+            </select>
+          </label>
+          <label class="toggle">sandbox:
+            <select id="sandbox-mode">
+              <option value="">default</option>
+              <option value="read-only">read-only</option>
+              <option value="workspace-write" selected>workspace-write</option>
+              <option value="danger-full-access">danger-full-access</option>
+            </select>
+          </label>
+          <label class="toggle"><input id="danger-bypass" type="checkbox" /> danger bypass</label>
+          <label class="toggle">cwd: <input id="cwd" type="text" size="36" placeholder="inherit server working dir" /></label>
+        </div>
       </div>
     </div>
 

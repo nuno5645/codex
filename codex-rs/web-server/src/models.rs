@@ -36,6 +36,15 @@ pub struct StartQuery {
     /// Generic config overrides in the form "key=value" (parsed as TOML values)
     #[serde(default)]
     pub overrides: Option<Vec<String>>, // e.g. ["tui.hide_agent_reasoning=true"]
+    /// Explicit approval policy (overrides full_auto if provided): untrusted | on-failure | on-request | never
+    #[serde(default)]
+    pub approval_policy: Option<String>,
+    /// Sandbox mode: read-only | workspace-write | danger-full-access
+    #[serde(default)]
+    pub sandbox_mode: Option<String>,
+    /// Shorthand to force approval never + danger-full-access
+    #[serde(default)]
+    pub dangerously_bypass: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

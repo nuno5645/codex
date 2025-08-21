@@ -1047,6 +1047,7 @@ dependencies = [
  "axum",
  "clap",
  "codex-arg0",
+ "codex-common",
  "codex-core",
  "codex-protocol",
  "futures",

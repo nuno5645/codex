@@ -32,6 +32,8 @@ pub fn create_router() -> Router<AppState> {
         .route("/api/start", post(start_task))
         .route("/api/events/:task_id", get(stream_events))
         .route("/api/cancel/:task_id", post(cancel_task))
+        .route("/api/approve/exec", post(approve_exec))
+        .route("/api/approve/patch", post(approve_patch))
         .route("/api/browse", get(browse_directory))
         .route("/api/search_files", get(search_files))
         .route("/api/conversations", get(list_conversations))
