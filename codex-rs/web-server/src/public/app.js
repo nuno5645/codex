@@ -52,6 +52,65 @@ let parentBrowsePath = null;
 let turnBusy = false; // true while agent is responding
 let awaitingApproval = false; // true while waiting for user approval
 
+// Heuristic classifier for read-only commands (best-effort UI hinting only)
+function isProbablyReadOnlyCommand(cmdArray) {
+  try {
+    const cmd = (cmdArray || []).join(' ').trim();
+    if (!cmd) return true;
+    const lower = cmd.toLowerCase();
+    // Obvious write/modify indicators
+    if (/[>|>>]|\b(tee|chmod|chown|rm|mv|cp|mkdir|rmdir)\b/.test(lower)) return false;
+    if (/\b(git\s+(add|commit|push|reset|merge|rebase|clean|stash|apply|am|checkout\s+-b))\b/.test(lower)) return false;
+    // Read-oriented common commands
+    const readHeads = [
+      'cat', 'sed', 'head', 'tail', 'rg', 'grep', 'egrep', 'fgrep', 'ls', 'find', 'nl', 'awk', 'cut', 'wc', 'stat', 'file',
+      'git show', 'git diff', 'git log', 'git status', 'git ls-files', 'git rev-parse', 'git branch', 'git remote -v'
+    ];
+    for (const h of readHeads) {
+      if (lower.startsWith(h)) return true;
+    }
+    // Default to read-only unless clearly writing (UI hint only)
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+// Extract likely file targets from a command line for display
+function extractReadableTargets(cmdArray) {
+  try {
+    const joined = (cmdArray || []).join(' ');
+    const s = joined.replace(/["'`]/g, ' ');
+    const candidates = [];
+    const regex = /\s((?:\.{0,2}\/)?[\w@%+~#=,:.-]+\/[\w@%+~#=,:./-]+|[\w@%+~#=,:.-]+\.(?:rs|ts|tsx|js|jsx|json|toml|md|txt|yaml|yml|sh|py|go|rb|java|kt|c|h|cpp|hpp|css|html|lock|nix))\b/g;
+    let m;
+    while ((m = regex.exec(s)) !== null) {
+      const p = (m[1] || '').trim();
+      if (!p) continue;
+      if (p.startsWith('-')) continue; // flags
+      if (/^\d+(,\d+)?p$/.test(p)) continue; // sed ranges
+      if (/^\d+$/.test(p)) continue;
+      candidates.push(p);
+    }
+    // dedupe while preserving order
+    const seen = new Set();
+    const out = [];
+    for (const c of candidates) { if (!seen.has(c)) { seen.add(c); out.push(c); } }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function prettyReadLabel(cmdArray) {
+  const files = extractReadableTargets(cmdArray);
+  if (files.length === 0) return 'read';
+  const max = 3;
+  const shown = files.slice(0, max).join(', ');
+  const more = files.length > max ? ` +${files.length - max} more` : '';
+  return `read: ${shown}${more}`;
+}
+
 function setInteractionLocked(locked) {
   // Disable/enable user inputs while it's not the user's turn
   try { promptEl.disabled = locked; } catch {}
@@ -460,6 +519,8 @@ async function searchFilesInPath(query) {
 }
 
 async function start(prompt) {
+  // Show loading immediately for responsiveness
+  try { runBtn.classList.add('loading'); } catch {}
   resetStream();
   turnBusy = true;
   awaitingApproval = false;
@@ -513,6 +574,7 @@ async function start(prompt) {
   if (!res.ok) {
     const t = await res.text();
     line('! start failed: ' + t, 'error');
+    try { runBtn.classList.remove('loading'); } catch {}
     turnBusy = false;
     awaitingApproval = false;
     updateTurnPill();
@@ -576,11 +638,15 @@ function stream(taskId) {
   if (es) { es.close(); es = null; }
   es = new EventSource(`/api/events/${encodeURIComponent(taskId)}`);
   const agentMsgLines = new Map(); // event id -> div for deltas
+  // For proper streaming formatting: keep a per-id buffer and content element
+  const agentMsgBufferById = new Map(); // id -> full accumulated text
+  const agentMsgContentElById = new Map(); // id -> content element inside the line
   // Track last rendered texts to collapse obvious duplicates
   let lastAgentFinal = '';
   const lastAgentDeltaById = new Map(); // id -> last delta text
   let lastBackground = '';
   const cmdOutputLines = new Map(); // call_id -> output pre element
+  const execOutStats = new Map(); // call_id -> {lines, bytes, summaryEl}
   const reasoningLines = new Map(); // event id -> div for reasoning content (legacy)
   const reasoningBlocks = new Map(); // event id -> {block, headerEl, contentEl}
   const cmdMap = new Map(); // call_id -> command (string)
@@ -614,8 +680,22 @@ function stream(taskId) {
           const block = document.createElement('div');
           block.className = 'approval-block';
           const h = document.createElement('div'); h.className = 'approval-title'; h.textContent = title; block.appendChild(h);
-          const cmd = document.createElement('div'); cmd.className = 'exec-cmd'; cmd.textContent = `$ ${ (msg.command||[]).join(' ') }`; block.appendChild(cmd);
+          const cmd = document.createElement('div');
+          cmd.className = 'exec-cmd';
+          if (isProbablyReadOnlyCommand(msg.command)) {
+            cmd.textContent = prettyReadLabel(msg.command);
+          } else {
+            cmd.textContent = `$ ${ (msg.command||[]).join(' ') }`;
+          }
+          block.appendChild(cmd);
           const cwd = document.createElement('div'); cwd.className = 'exec-cwd'; cwd.textContent = `cwd: ${msg.cwd || ''}`; block.appendChild(cwd);
+          // Read-only hint
+          if (isProbablyReadOnlyCommand(msg.command)) {
+            const hint = document.createElement('div');
+            hint.className = 'dim';
+            hint.textContent = '(looks read-only)';
+            block.appendChild(hint);
+          }
           const actions = document.createElement('div'); actions.className = 'approval-actions';
           const bApprove = document.createElement('button'); bApprove.className='btn approve'; bApprove.textContent='Approve'; bApprove.onclick=()=>sendApproval('exec', id, 'approved');
           const bApproveSess = document.createElement('button'); bApproveSess.className='btn approve'; bApproveSess.textContent='Approve (session)'; bApproveSess.onclick=()=>sendApproval('exec', id, 'approved_for_session');
@@ -656,25 +736,46 @@ function stream(taskId) {
         }
         case 'agent_message': {
           const text = (msg.message || '').trim();
-          if (text && text === lastAgentFinal) break; // drop exact duplicate
-          lastAgentFinal = text;
-          const div = richLine([{tag:'tag', text:'agent    '}], 'agent');
-          const nodes = renderMarkdownToNodes(text);
-          div.appendChild(nodes);
-          agentMsgLines.set(id, div);
+          // Reuse existing line if we streamed deltas; otherwise create a new one
+          let lineEl = agentMsgLines.get(id);
+          let contentEl = agentMsgContentElById.get(id);
+          if (!lineEl || !contentEl) {
+            lineEl = richLine([{tag:'tag', text:'agent    '}], 'agent');
+            contentEl = document.createElement('div');
+            contentEl.className = 'agent-content';
+            lineEl.appendChild(contentEl);
+            agentMsgLines.set(id, lineEl);
+            agentMsgContentElById.set(id, contentEl);
+          }
+          agentMsgBufferById.set(id, text);
+          // Re-render full content for correct formatting
+          try { contentEl.textContent = ''; } catch {}
+          contentEl.appendChild(renderMarkdownToNodes(text));
+          term.scrollTop = term.scrollHeight;
           break;
         }
         case 'agent_message_delta': {
-          let div = agentMsgLines.get(id);
-          if (!div) {
-            div = richLine([{tag:'tag', text:'agent    '}], 'agent');
-            agentMsgLines.set(id, div);
+          // Ensure we have a dedicated content container for this message id
+          let lineEl = agentMsgLines.get(id);
+          let contentEl = agentMsgContentElById.get(id);
+          if (!lineEl || !contentEl) {
+            lineEl = richLine([{tag:'tag', text:'agent    '}], 'agent');
+            contentEl = document.createElement('div');
+            contentEl.className = 'agent-content';
+            lineEl.appendChild(contentEl);
+            agentMsgLines.set(id, lineEl);
+            agentMsgContentElById.set(id, contentEl);
           }
           const delta = (msg.delta || '').trim();
           const last = lastAgentDeltaById.get(id) || '';
           if (delta && delta === last) break; // drop duplicate delta for this id
           lastAgentDeltaById.set(id, delta);
-          div.appendChild(renderMarkdownToNodes(delta));
+          // Append to buffer and re-render to keep formatting consistent while streaming
+          const prev = agentMsgBufferById.get(id) || '';
+          const next = prev + delta;
+          agentMsgBufferById.set(id, next);
+          try { contentEl.textContent = ''; } catch {}
+          contentEl.appendChild(renderMarkdownToNodes(next));
           term.scrollTop = term.scrollHeight;
           break;
         }
@@ -769,10 +870,14 @@ function stream(taskId) {
           header.className = 'exec-header';
           const tagSpan = document.createElement('span');
           tagSpan.className = 'tag';
-          tagSpan.textContent = 'exec     ';
+          tagSpan.textContent = isProbablyReadOnlyCommand(msg.command) ? 'read     ' : 'exec     ';
           const cmdSpan = document.createElement('span');
           cmdSpan.className = 'exec-cmd';
-          cmdSpan.textContent = `$ ${cmd}`;
+          if (isProbablyReadOnlyCommand(msg.command)) {
+            cmdSpan.textContent = prettyReadLabel(msg.command);
+          } else {
+            cmdSpan.textContent = `$ ${cmd}`;
+          }
           const statusEl = document.createElement('span');
           statusEl.className = 'exec-status running';
           const spin = document.createElement('span');
@@ -781,6 +886,14 @@ function stream(taskId) {
           const stTxt = document.createElement('span');
           stTxt.textContent = 'running…';
           statusEl.appendChild(stTxt);
+          // Read-only badge
+          if (isProbablyReadOnlyCommand(msg.command)) {
+            const ro = document.createElement('span');
+            ro.className = 'badge read';
+            ro.title = 'Heuristic: read-only command';
+            ro.textContent = 'read';
+            statusEl.appendChild(ro);
+          }
           header.appendChild(tagSpan);
           header.appendChild(cmdSpan);
           header.appendChild(statusEl);
@@ -791,15 +904,25 @@ function stream(taskId) {
             cwdEl.textContent = `cwd: ${cwd}`;
             block.appendChild(cwdEl);
           }
+          // Collapsed output container (details)
+          const outWrap = document.createElement('details');
+          outWrap.className = 'exec-output-wrap';
+          outWrap.open = false; // collapsed by default
+          const outSum = document.createElement('summary');
+          outSum.className = 'exec-output-summary';
+          outSum.textContent = 'output';
           const outPre = document.createElement('div');
           outPre.className = 'exec-output';
-          block.appendChild(outPre);
+          outWrap.appendChild(outSum);
+          outWrap.appendChild(outPre);
+          block.appendChild(outWrap);
           term.appendChild(block);
           term.scrollTop = term.scrollHeight;
           if (msg.call_id) {
             cmdMap.set(msg.call_id, cmd);
             cmdOutputLines.set(msg.call_id, outPre);
             execStatusMap.set(msg.call_id, { statusEl, blockEl: block });
+            execOutStats.set(msg.call_id, { lines: 0, bytes: 0, summaryEl: outSum });
           }
           activeExecs += 1;
           updateExecStatus();
@@ -823,6 +946,14 @@ function stream(taskId) {
           if (msg.stream === 'stderr') span.className = 'stderr';
           span.textContent = text;
           outPre.appendChild(span);
+          // Update summary counts
+          const stats = execOutStats.get(cid);
+          if (stats && stats.summaryEl) {
+            const addedLines = (text.match(/\n/g) || []).length + (text && !text.endsWith('\n') ? 1 : 0);
+            stats.lines += addedLines;
+            stats.bytes += (typeof text === 'string' ? text.length : 0);
+            stats.summaryEl.textContent = `output (${stats.lines} lines, ${stats.bytes} bytes)`;
+          }
           term.scrollTop = term.scrollHeight;
           break;
         }
