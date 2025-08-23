@@ -1,7 +1,7 @@
 use crate::config::detect_linux_sandbox_exe;
 use crate::conversations::{get_conversation_list, get_conversation_detail, delete_conversation_file};
 use crate::models::*;
-use crate::registries::{REGISTRY, CONV_REGISTRY};
+use crate::registries::{REGISTRY, CONV_REGISTRY, STATUS_REGISTRY};
 
 use std::path::PathBuf;
 use std::collections::{HashMap, VecDeque};
@@ -101,6 +101,8 @@ pub async fn start_task(
             error!("Failed to load config: {}", e);
             (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
         })?;
+    // Capture model context window (Option<u64>) before moving config
+    let initial_context_window = config.model_context_window;
 
     // Either create a new conversation or look up an existing one
     let (conversation_uuid, conversation, maybe_session_configured) = if let Some(cid_str) = conversation_id {
@@ -122,6 +124,8 @@ pub async fn start_task(
             .new_conversation(config)
             .await
             .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")))?;
+        // Persist the model context window for this conversation, if known
+        STATUS_REGISTRY.set_model_context_window(conversation_id, initial_context_window).await;
         (conversation_id, conversation, Some(session_configured))
     };
 
@@ -133,12 +137,15 @@ pub async fn start_task(
         None => {
             let (conv_tx, _rx_owner) = tokio::sync::broadcast::channel::<Event>(256);
             if let Some(session_configured) = maybe_session_configured.clone() {
-                let initial_event = Event { id: "".to_string(), msg: EventMsg::SessionConfigured(session_configured) };
+                let initial_event = Event { id: "".to_string(), msg: EventMsg::SessionConfigured(session_configured.clone()) };
                 let _ = conv_tx.send(initial_event);
+                // Record initial session/model in status registry
+                STATUS_REGISTRY.upsert_session(conversation_uuid, &session_configured).await;
             }
             // Spawn a single background pump task for this conversation
             let pump_tx = conv_tx.clone();
             let pump_conversation = conversation.clone();
+            let conv_id = conversation_uuid;
             tokio::spawn(async move {
                 loop {
                     let res = tokio::select! {
@@ -148,6 +155,16 @@ pub async fn start_task(
                     match res {
                         Ok(event) => {
                             let is_shutdown_complete = matches!(event.msg, EventMsg::ShutdownComplete);
+                            // Update status registry for relevant events
+                            match &event.msg {
+                                EventMsg::SessionConfigured(ev) => {
+                                    STATUS_REGISTRY.upsert_session(conv_id, ev).await;
+                                }
+                                EventMsg::TokenCount(usage) => {
+                                    STATUS_REGISTRY.update_tokens(conv_id, usage).await;
+                                }
+                                _ => {}
+                            }
                             let _ = pump_tx.send(event);
                             if is_shutdown_complete { break; }
                         }
@@ -631,4 +648,19 @@ pub async fn get_write_enabled(State(state): State<AppState>) -> Result<impl Int
 pub async fn set_write_enabled(State(state): State<AppState>, Json(body): Json<SetWriteQuery>) -> Result<impl IntoResponse, (StatusCode, String)> {
     state.write_enabled.store(body.enabled, std::sync::atomic::Ordering::SeqCst);
     Ok(Json(OkResponse { ok: body.enabled }))
+}
+
+pub async fn get_status(Path(id): Path<String>) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let cid = Uuid::parse_str(id.trim()).map_err(|e| (StatusCode::BAD_REQUEST, format!("invalid conversation id: {e}")))?;
+    if let Some(st) = STATUS_REGISTRY.get(&cid).await {
+        let resp = StatusResponse {
+            model: st.model,
+            session_id: st.session_id.map(|u| u.to_string()),
+            token_usage: st.token_usage,
+            model_context_window: st.model_context_window,
+        };
+        Ok(Json(resp))
+    } else {
+        Err((StatusCode::NOT_FOUND, "no status for conversation".to_string()))
+    }
 }

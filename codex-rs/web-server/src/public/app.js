@@ -18,6 +18,7 @@ const approvalPolicyEl = document.getElementById('approval-policy');
 const sandboxModeEl = document.getElementById('sandbox-mode');
 const dangerBypassEl = document.getElementById('danger-bypass');
 const statusTokens = document.getElementById('status-tokens');
+const statusContext = document.getElementById('status-context');
 const statusModel = document.getElementById('status-model');
 const statusSession = document.getElementById('status-session');
 const convListEl = document.getElementById('conv-list');
@@ -51,6 +52,39 @@ let currentBrowsePath = '';
 let parentBrowsePath = null;
 let turnBusy = false; // true while agent is responding
 let awaitingApproval = false; // true while waiting for user approval
+let modelContextWindow = null; // optional u64 from server status
+let lastTokenUsage = null;     // last seen TokenUsage object
+
+function tokensInContextWindow(tu) {
+  if (!tu) return 0;
+  const total = Number(tu.total_tokens ?? 0);
+  const reasoning = Number(tu.reasoning_output_tokens ?? 0);
+  return Math.max(0, total - reasoning);
+}
+
+function updateContextPill() {
+  if (!statusContext) return;
+  if (!modelContextWindow || !lastTokenUsage) {
+    statusContext.textContent = 'ctx: –';
+    return;
+  }
+  const used = tokensInContextWindow(lastTokenUsage);
+  const cw = Number(modelContextWindow);
+  if (!cw || cw <= 0) { statusContext.textContent = 'ctx: –'; return; }
+  const pctLeft = Math.max(0, Math.min(100, Math.round(100 - (used / cw) * 100)));
+  statusContext.textContent = `ctx: ${pctLeft}% left`;
+}
+
+function setTokenStatusFromUsage(tu) {
+  try {
+    const input = (tu.input_tokens ?? 0) - (tu.cached_input_tokens ?? 0);
+    const cached = tu.cached_input_tokens ?? 0;
+    const output = tu.output_tokens ?? 0;
+    statusTokens.textContent = `tokens: total=${input+output} input=${input}${cached>0?`(+${cached} cached)`:''} output=${output}`;
+    lastTokenUsage = tu;
+    updateContextPill();
+  } catch {}
+}
 
 // Heuristic classifier for read-only commands (best-effort UI hinting only)
 function isProbablyReadOnlyCommand(cmdArray) {
@@ -585,6 +619,8 @@ async function start(prompt) {
   const { task_id, conversation_id } = await res.json();
   currentTaskId = task_id;
   currentConversationId = conversation_id;
+  // Hydrate model/session/tokens/context from status endpoint
+  try { await hydrateStatusFromServer(currentConversationId); } catch {}
   cancelBtn.disabled = false;
   compactBtn.disabled = false;
   // show loading on Run while there are active execs
@@ -597,6 +633,22 @@ async function start(prompt) {
   if (imagesEl) imagesEl.value = '';
   renderImageChips();
   // Keep model/profile/overrides as-is for next run
+}
+
+async function hydrateStatusFromServer(conversationId) {
+  if (!conversationId) return;
+  try {
+    const s = await fetch(`/api/status/${encodeURIComponent(conversationId)}`);
+    if (!s.ok) return;
+    const st = await s.json();
+    if (st && st.model) statusModel.textContent = 'model: ' + st.model;
+    if (st && st.session_id) statusSession.textContent = 'session: ' + (st.session_id.slice(0,8));
+    if (st && st.model_context_window) {
+      modelContextWindow = Number(st.model_context_window) || null;
+      updateContextPill();
+    }
+    if (st && st.token_usage) setTokenStatusFromUsage(st.token_usage);
+  } catch {}
 }
 
 async function sendApproval(kind, eventId, decision) {
@@ -1098,11 +1150,7 @@ function stream(taskId) {
           break;
         }
         case 'token_count': {
-          const total = msg.total_tokens ?? 0;
-          const input = (msg.input_tokens ?? 0) - (msg.cached_input_tokens ?? 0);
-          const cached = msg.cached_input_tokens ?? 0;
-          const output = msg.output_tokens ?? 0;
-          statusTokens.textContent = `tokens: total=${input+output} input=${input}${cached>0?`(+${cached} cached)`:''} output=${output}`;
+          setTokenStatusFromUsage(msg);
           break;
         }
         case 'error': {
@@ -1147,9 +1195,7 @@ function stream(taskId) {
           break;
         }
         case 'token_count_update': {
-          if (msg.total_tokens) {
-            statusTokens.textContent = `tokens: ${msg.total_tokens}`;
-          }
+          if (msg.total_tokens) setTokenStatusFromUsage(msg);
           break;
         }
         case 'turn_started': {
@@ -1225,6 +1271,12 @@ async function hydrateConversationsList() {
           for (const m of (d.messages || [])) {
             richLine([{tag:'tag', text:(m.role || 'agent').padEnd(9,' ')}, {text: m.text || ''}], '');
           }
+          // Hydrate header model/session/tokens from status endpoint
+          try {
+            modelContextWindow = null;
+            lastTokenUsage = null;
+            await hydrateStatusFromServer(c.id);
+          } catch {}
         } catch {}
       });
       convListEl.appendChild(div);

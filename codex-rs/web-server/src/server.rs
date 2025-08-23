@@ -31,6 +31,7 @@ pub fn create_router() -> Router<AppState> {
     Router::new()
         .route("/api/start", post(start_task))
         .route("/api/events/:task_id", get(stream_events))
+        .route("/api/status/:id", get(get_status))
         .route("/api/cancel/:task_id", post(cancel_task))
         .route("/api/approve/exec", post(approve_exec))
         .route("/api/approve/patch", post(approve_patch))

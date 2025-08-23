@@ -1,5 +1,5 @@
 use crate::models::TaskContext;
-use codex_core::protocol::Event;
+use codex_core::protocol::{Event, SessionConfiguredEvent, TokenUsage};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
@@ -52,3 +52,51 @@ pub static REGISTRY: once_cell::sync::Lazy<ReceiverRegistry> =
 
 pub static CONV_REGISTRY: once_cell::sync::Lazy<ConvRegistry> = 
     once_cell::sync::Lazy::new(|| ConvRegistry::new());
+
+// ----------------------------------------------------------------------------
+// Conversation status tracking (model, session_id, token usage)
+
+#[derive(Clone, Debug, Default)]
+pub struct ConversationStatus {
+    pub model: Option<String>,
+    pub session_id: Option<Uuid>,
+    pub token_usage: Option<TokenUsage>,
+    pub model_context_window: Option<u64>,
+}
+
+pub struct StatusRegistry {
+    inner: RwLock<std::collections::HashMap<Uuid, ConversationStatus>>,
+}
+
+impl StatusRegistry {
+    pub fn new() -> Self {
+        Self { inner: RwLock::new(std::collections::HashMap::new()) }
+    }
+
+    pub async fn upsert_session(&self, key: Uuid, ev: &SessionConfiguredEvent) {
+        let mut map = self.inner.write().await;
+        let entry = map.entry(key).or_default();
+        entry.model = Some(ev.model.clone());
+        entry.session_id = Some(ev.session_id);
+    }
+
+    pub async fn update_tokens(&self, key: Uuid, usage: &TokenUsage) {
+        let mut map = self.inner.write().await;
+        let entry = map.entry(key).or_default();
+        entry.token_usage = Some(usage.clone());
+    }
+
+    pub async fn set_model_context_window(&self, key: Uuid, window: Option<u64>) {
+        let mut map = self.inner.write().await;
+        let entry = map.entry(key).or_default();
+        entry.model_context_window = window;
+    }
+
+    pub async fn get(&self, key: &Uuid) -> Option<ConversationStatus> {
+        let map = self.inner.read().await;
+        map.get(key).cloned()
+    }
+}
+
+pub static STATUS_REGISTRY: once_cell::sync::Lazy<StatusRegistry> =
+    once_cell::sync::Lazy::new(|| StatusRegistry::new());

@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use codex_core::{CodexConversation, protocol::Event};
+use codex_core::{CodexConversation, protocol::{Event, TokenUsage}};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -139,4 +139,16 @@ pub struct DiffResponse {
 #[derive(Serialize)]
 pub struct OkResponse {
     pub ok: bool,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct StatusResponse {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_usage: Option<TokenUsage>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_context_window: Option<u64>,
 }
